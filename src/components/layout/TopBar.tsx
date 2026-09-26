@@ -308,7 +308,8 @@ export function TopBar({ onOpenMenu, className }: TopBarProps) {
       {/* Right cluster */}
       <div className="ml-auto flex items-center gap-1 sm:gap-1.5">
         <span className="mr-1 hidden text-[11px] tabular-nums text-muted-foreground lg:block">
-          Reserves {formatCurrency(1_240_000, { compact: true })}
+          Reserves{' '}
+          {formatCurrency(1_240_000, 'USD', { notation: 'compact', maximumFractionDigits: 1 })}
         </span>
         <ThemeToggle />
         <NotificationsMenu />
