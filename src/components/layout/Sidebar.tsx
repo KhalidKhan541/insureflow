@@ -145,7 +145,8 @@ function OpenClaimsWidget({ collapsed, onNavigate }: { collapsed: boolean; onNav
       </div>
       <p className="mt-2 text-2xl font-bold tabular-nums leading-none">{total}</p>
       <p className="mt-1.5 text-[11px] text-white/80">
-        {formatCurrency(reserve, { compact: true })} reserved
+        {formatCurrency(reserve, 'USD', { notation: 'compact', maximumFractionDigits: 1 })}{' '}
+        reserved
       </p>
       <span className="mt-3 inline-flex items-center gap-1 text-[11px] font-semibold text-white/90 transition-transform group-hover:translate-x-0.5">
         Review queue
