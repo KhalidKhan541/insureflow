@@ -51,6 +51,13 @@ const SEVERITY_COLORS: Record<string, string> = {
   Low: '#94a3b8',
 };
 
+/** Whole-dollar currency label, used across chart tooltips and KPI values. */
+const money = (value: number) => formatCurrency(value, 'USD', { maximumFractionDigits: 0 });
+
+/** Short currency label, e.g. `$48.2M`. */
+const moneyCompact = (value: number) =>
+  formatCurrency(value, 'USD', { notation: 'compact', maximumFractionDigits: 1 });
+
 function ChartTooltip({ active, payload, label, formatter }: any) {
   if (!active || !payload?.length) return null;
   return (
@@ -72,10 +79,9 @@ export default function AnalyticsPage() {
   const maxCommission = Math.max(...MOCK_COMMISSION_SPEND.map((m) => m.commission));
   const severityTotal = MOCK_CLAIMS_SEVERITY.reduce((sum, s) => sum + s.value, 0);
   const policyTotal = MOCK_POLICY_MIX.reduce((sum, p) => sum + p.value, 0);
-  const latestPremium = MOCK_PREMIUM_GROWTH[MOCK_PREMIUM_GROWTH.length - 1];
-  const firstPremium = MOCK_PREMIUM_GROWTH[0];
-  const premiumGrowth =
-    ((latestPremium.current - firstPremium.current) / firstPremium.current) * 100;
+  const currentPeriodTotal = MOCK_PREMIUM_GROWTH.reduce((sum, m) => sum + m.current, 0);
+  const priorPeriodTotal = MOCK_PREMIUM_GROWTH.reduce((sum, m) => sum + m.prior, 0);
+  const premiumGrowth = ((currentPeriodTotal - priorPeriodTotal) / priorPeriodTotal) * 100;
 
   const overviewMetrics = [
     {
@@ -84,7 +90,7 @@ export default function AnalyticsPage() {
       value: formatPercent(premiumGrowth / 100),
       delta: premiumGrowth,
       deltaLabel: 'vs prior year',
-      hint: `${formatCurrency(firstPremium.current)} → ${formatCurrency(latestPremium.current)}`,
+      hint: `${moneyCompact(currentPeriodTotal)} vs ${moneyCompact(priorPeriodTotal)} prior year`,
       trend: premiumGrowth >= 0 ? ('up' as const) : ('down' as const),
       format: 'raw' as const,
     },
@@ -166,7 +172,7 @@ export default function AnalyticsPage() {
                 label={metric.label}
                 value={
                   metric.format === 'currency'
-                    ? formatCurrency(metric.value)
+                    ? money(metric.value)
                     : metric.format === 'percent'
                       ? formatPercent(metric.value)
                       : metric.value
@@ -219,7 +225,7 @@ export default function AnalyticsPage() {
                       tick={{ fontSize: 11, fill: '#64748b' }}
                       tickFormatter={(v) => `${Math.round(v / 1000)}k`}
                     />
-                    <Tooltip content={<ChartTooltip formatter={formatCurrency} />} />
+                    <Tooltip content={<ChartTooltip formatter={money} />} />
                     <Line
                       type="monotone"
                       dataKey="current"
@@ -282,7 +288,7 @@ export default function AnalyticsPage() {
                       {slice.type}
                     </span>
                     <span className="font-medium text-slate-700">
-                      {formatNumber(slice.value)} · {formatPercent(slice.value / policyTotal, 0)}
+                      {formatNumber(slice.value)} · {formatPercent(slice.value / policyTotal, { digits: 0 })}
                     </span>
                   </li>
                 ))}
@@ -373,7 +379,7 @@ export default function AnalyticsPage() {
                   </span>
                   <span className="font-medium text-slate-700">
                     {formatNumber(slice.value)} ·{' '}
-                    {formatPercent(slice.value / severityTotal, 0)}
+                    {formatPercent(slice.value / severityTotal, { digits: 0 })}
                   </span>
                 </li>
               ))}
@@ -466,7 +472,7 @@ export default function AnalyticsPage() {
                     {slice.type}
                   </span>
                   <span className="font-medium text-slate-700">
-                    {formatNumber(slice.value)} · {formatPercent(slice.value / policyTotal, 0)}
+                    {formatNumber(slice.value)} · {formatPercent(slice.value / policyTotal, { digits: 0 })}
                   </span>
                 </li>
               ))}
@@ -481,7 +487,7 @@ export default function AnalyticsPage() {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <MetricCard
               label="Commission spend (YTD)"
-              value={formatCurrency(
+              value={money(
                 MOCK_COMMISSION_SPEND.reduce((sum, m) => sum + m.commission, 0),
               )}
               delta={1.8}
@@ -502,7 +508,7 @@ export default function AnalyticsPage() {
             />
             <MetricCard
               label="Earned premium (YTD)"
-              value={formatCurrency(
+              value={money(
                 MOCK_COMMISSION_SPEND.reduce((sum, m) => sum + m.premium, 0),
               )}
               delta={8.2}
@@ -512,7 +518,7 @@ export default function AnalyticsPage() {
             />
             <MetricCard
               label="Avg commission / month"
-              value={formatCurrency(
+              value={money(
                 MOCK_COMMISSION_SPEND.reduce((sum, m) => sum + m.commission, 0) /
                   MOCK_COMMISSION_SPEND.length,
               )}
@@ -531,7 +537,7 @@ export default function AnalyticsPage() {
                   Monthly commission outflow against written premium
                 </p>
               </div>
-              <Badge variant="outline">Peak {formatCurrency(maxCommission)}</Badge>
+              <Badge variant="outline">Peak {money(maxCommission)}</Badge>
             </div>
             <div className="h-80 w-full">
               <ResponsiveContainer width="100%" height="100%">
@@ -550,7 +556,7 @@ export default function AnalyticsPage() {
                     tick={{ fontSize: 11, fill: '#64748b' }}
                     tickFormatter={(v) => `${Math.round(v / 1000)}k`}
                   />
-                  <Tooltip content={<ChartTooltip formatter={formatCurrency} />} />
+                  <Tooltip content={<ChartTooltip formatter={money} />} />
                   <Bar
                     dataKey="premium"
                     name="Written premium"
