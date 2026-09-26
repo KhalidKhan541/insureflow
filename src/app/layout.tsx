@@ -62,8 +62,10 @@ export const viewport: Viewport = {
 /**
  * Applies the stored `if-theme` class to <html> before hydration so the first
  * paint already matches the user's saved theme (no flash of the wrong theme).
+ * Reads both the canonical `if-theme` key and the ThemeContext's
+ * `if-theme-mode` key so either storage format is honoured.
  */
-const themeScript = `(function(){try{var t=localStorage.getItem('if-theme');if(!t)return;var theme=t;try{var p=JSON.parse(t);if(p&&typeof p==='object')theme=p.theme||p.mode||t;}catch(e){}if(theme==='system'){theme=window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}if(theme!=='dark'&&theme!=='light')return;var el=document.documentElement;el.classList.remove('light','dark');el.classList.add(theme);el.style.colorScheme=theme;}catch(e){}})();`;
+const themeScript = `(function(){try{var t=null;try{t=localStorage.getItem('if-theme');}catch(e){}if(!t){try{t=localStorage.getItem('if-theme-mode');}catch(e){}}if(!t)return;var theme=t;try{var p=JSON.parse(t);if(p&&typeof p==='object')theme=p.theme||p.mode||t;}catch(e){}if(theme==='system'){theme=window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}if(theme!=='dark'&&theme!=='light')return;var el=document.documentElement;el.classList.remove('light','dark');el.classList.add(theme);el.style.colorScheme=theme;}catch(e){}})();`;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
