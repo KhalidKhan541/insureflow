@@ -173,7 +173,7 @@ function NavBody({
       {/* Brand */}
       <div
         className={cn(
-          'flex h-16 shrink-0 items-center gap-3 border-b border-if-sidebar-border px-4',
+          'flex h-16 shrink-0 items-center gap-3 border-b border-sidebar-border px-4',
           collapsed && 'lg:justify-center lg:px-0'
         )}
       >
@@ -218,13 +218,13 @@ function NavBody({
       </nav>
 
       {/* Open claims widget (gradient card) */}
-      <div className="border-t border-if-sidebar-border p-3">
+      <div className="border-t border-sidebar-border p-3">
         <OpenClaimsWidget collapsed={collapsed} onNavigate={onNavigate} />
       </div>
 
       {/* Collapse toggle (desktop only) */}
       {showCollapseToggle ? (
-        <div className="hidden border-t border-if-sidebar-border p-3 lg:block">
+        <div className="hidden border-t border-sidebar-border p-3 lg:block">
           <button
             type="button"
             onClick={toggleCollapsed}
@@ -255,7 +255,7 @@ export function Sidebar({ className }: { className?: string }) {
       {/* ---------- Desktop rail ---------- */}
       <aside
         className={cn(
-          'fixed inset-y-0 left-0 z-if-sidebar hidden border-r border-if-sidebar-border bg-sidebar lg:block',
+          'fixed inset-y-0 left-0 z-if-sidebar hidden border-r border-sidebar-border bg-sidebar lg:block',
           'transition-[width] duration-300 ease-if-out',
           isCollapsed ? 'w-20' : 'w-64',
           className
@@ -274,7 +274,7 @@ export function Sidebar({ className }: { className?: string }) {
             onClick={close}
             className="absolute inset-0 bg-slate-950/45 backdrop-blur-[2px] animate-if-fade-in"
           />
-          <div className="absolute inset-y-0 left-0 w-64 border-r border-if-sidebar-border bg-sidebar shadow-2xl animate-if-slide-in-left">
+          <div className="absolute inset-y-0 left-0 w-64 border-r border-sidebar-border bg-sidebar shadow-2xl animate-if-slide-in-left">
             <button
               type="button"
               onClick={close}
