@@ -49,7 +49,7 @@ function ChartTooltip({ active, payload, label }: any) {
       {payload.map((entry: any) => (
         <p key={entry.dataKey} className="text-xs font-medium" style={{ color: entry.color }}>
           {entry.dataKey === 'premium' ? 'Written premium' : 'Claims paid'}:{' '}
-          {formatCurrency(entry.value)}
+          {formatCurrency(entry.value, 'USD', { maximumFractionDigits: 0 })}
         </p>
       ))}
     </div>
@@ -82,7 +82,7 @@ export default function DashboardPage() {
             label={metric.label}
             value={
               metric.format === 'currency'
-                ? formatCurrency(metric.value)
+                ? formatCurrency(metric.value, 'USD', { maximumFractionDigits: 0 })
                 : metric.format === 'percent'
                   ? formatPercent(metric.value)
                   : formatNumber(metric.value)
@@ -102,7 +102,8 @@ export default function DashboardPage() {
             <div>
               <CardTitle>Premium vs claims paid</CardTitle>
               <p className="mt-1 text-xs text-slate-500">
-                {formatCurrency(premiumToDate)} written · {formatCurrency(claimsPaidToDate)} paid
+                {formatCurrency(premiumToDate, 'USD', { maximumFractionDigits: 0 })} written ·{' '}
+                {formatCurrency(claimsPaidToDate, 'USD', { maximumFractionDigits: 0 })} paid
               </p>
             </div>
             <div className="flex items-center gap-4 text-xs font-medium text-slate-600">
@@ -189,7 +190,7 @@ export default function DashboardPage() {
                 </div>
                 <div className="mt-2 flex items-center justify-between text-xs">
                   <span className="font-semibold text-slate-700">
-                    {formatCurrency(claim.amount)}
+                    {formatCurrency(claim.amount, 'USD', { maximumFractionDigits: 0 })}
                   </span>
                   <span className="text-slate-500">{claim.filed}</span>
                 </div>
@@ -219,10 +220,11 @@ export default function DashboardPage() {
                   </span>
                   <span className="flex items-center gap-3">
                     <span className="text-xs text-slate-500">
-                      {agent.policies} policies · {formatPercent(agent.retention, 0)} retained
+                      {agent.policies} policies · {formatPercent(agent.retention, { digits: 0 })}{' '}
+                      retained
                     </span>
                     <span className="font-semibold tabular-nums text-slate-800">
-                      {formatCurrency(agent.book)}
+                      {formatCurrency(agent.book, 'USD', { maximumFractionDigits: 0 })}
                     </span>
                   </span>
                 </div>
