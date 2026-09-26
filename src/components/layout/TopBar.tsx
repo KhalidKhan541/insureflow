@@ -136,7 +136,7 @@ function NotificationsMenu() {
       {open ? (
         <div
           role="menu"
-          className="absolute right-0 z-if-dropdown mt-2 w-[min(22rem,calc(100vw-2rem))] overflow-hidden rounded-xl border border-border bg-popover shadow-lg animate-if-scale-in"
+          className="absolute right-0 z-if-dropdown mt-2 w-[min(22rem,calc(100vw_-_2rem))] overflow-hidden rounded-xl border border-border bg-popover shadow-lg animate-if-scale-in"
         >
           <div className="flex items-center justify-between border-b border-border px-4 py-3">
             <div>
