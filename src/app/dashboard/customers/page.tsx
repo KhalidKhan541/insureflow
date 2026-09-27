@@ -56,30 +56,62 @@ interface Customer {
 }
 
 const normalizeRisk = (value: string): RiskProfile => {
-  const normalized = value.trim().toLowerCase();
+  const normalized = value.trim().toLowerCase().replace(/_/g, ' ');
   if (normalized.startsWith('pref')) return 'Preferred';
-  if (normalized.startsWith('sub')) return 'Substandard';
+  if (normalized.startsWith('sub') || normalized.startsWith('high') || normalized.startsWith('elev')) {
+    return 'Substandard';
+  }
   return 'Standard';
+};
+
+/** 'at_risk' → 'At Risk' */
+const normalizeStatus = (value: string, fallback = 'Active'): string => {
+  const trimmed = value.trim();
+  if (!trimmed) return fallback;
+  return trimmed
+    .replace(/_/g, ' ')
+    .split(/\s+/)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ');
+};
+
+const readLocation = (row: Row): string => {
+  const address = pick(row, ['address', 'location', 'mailingAddress']);
+  if (address && typeof address === 'object') {
+    const parts = [
+      readText(address as Row, ['city']),
+      readText(address as Row, ['state', 'region']),
+    ].filter(Boolean);
+    if (parts.length > 0) return parts.join(', ');
+  }
+  if (typeof address === 'string') return address;
+  return readText(row, ['city', 'region']);
 };
 
 const CUSTOMERS: Customer[] = (MOCK_CUSTOMERS as unknown[]).map((raw, index) => {
   const row = raw as Row;
   const name = readText(row, ['name', 'fullName', 'customer'], `Customer ${index + 1}`);
-  const joined = pick(row, ['joined', 'joinedDate', 'memberSince', 'since', 'startDate', 'createdAt']);
+  const joined = pick(row, ['since', 'joined', 'joinedDate', 'memberSince', 'startDate', 'createdAt']);
 
   return {
-    id: readText(row, ['id', 'customerId', 'customerNo'], `CUST-${1041 + index}`),
+    id: readText(row, ['customerId', 'customerNo', 'id'], `CUST-${1041 + index}`),
     name,
     email: readText(row, ['email', 'emailAddress']),
     avatar: readText(row, ['avatar', 'avatarUrl', 'initials', 'image']),
     policies: readNumber(row, ['policies', 'policyCount', 'activePolicies', 'policiesCount']),
-    premium: readNumber(row, ['lifetimePremium', 'premium', 'totalPremium', 'premiumPaid']),
+    premium: readNumber(row, [
+      'lifetimePremium',
+      'lifetimeValue',
+      'totalPaid',
+      'premium',
+      'totalPremium',
+    ]),
     claims: readNumber(row, ['claims', 'claimsCount', 'claimsHistory', 'claimsMade']),
     risk: normalizeRisk(readText(row, ['riskProfile', 'risk', 'riskTier', 'riskClass'], 'Standard')),
-    status: readText(row, ['status', 'state'], 'Active'),
+    status: normalizeStatus(readText(row, ['status', 'state'], 'Active')),
     joined: formatDate(joined as string | number | Date | null | undefined, 'medium'),
     phone: readText(row, ['phone', 'phoneNumber', 'mobile']),
-    location: readText(row, ['location', 'city', 'region']),
+    location: readLocation(row),
   };
 });
 
@@ -107,6 +139,8 @@ const STATUS_VARIANT: Record<string, BadgeVariant> = {
   'In Underwriting': 'default',
   Lapsed: 'destructive',
   Cancelled: 'destructive',
+  Inactive: 'outline',
+  Churned: 'destructive',
   'At Risk': 'warning',
 };
 
