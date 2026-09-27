@@ -20,12 +20,7 @@ import {
 import { Badge, type BadgeVariant } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardTitle } from '@/components/ui/Card';
-import {
-  MOCK_COMMISSION_SPEND,
-  MOCK_PREMIUM_CLAIMS,
-  MOCK_RETENTION_TREND,
-  MOCK_TOP_AGENTS,
-} from '@/lib/mock-data';
+import { MOCK_AGENTS, MOCK_CLAIMS, MOCK_POLICIES, MOCK_PREMIUMS } from '@/lib/mock-data';
 import { cn, formatCurrency, formatNumber, formatPercent } from '@/lib/utils';
 
 const TEAL = '#0d9488';
@@ -45,11 +40,24 @@ const RANGE_PRESETS = [
 
 const PIE_PALETTE = ['#0d9488', '#14b8a6', '#2dd4bf', '#5eead4', '#99f6e4', '#0f766e'];
 
+const LOB_LABEL: Record<string, string> = {
+  personal_auto: 'Personal auto',
+  homeowners: 'Homeowners',
+  commercial_auto: 'Commercial auto',
+  commercial_property: 'Commercial property',
+  general_liability: 'General liability',
+  workers_compensation: "Workers' comp",
+  cyber: 'Cyber',
+  professional_indemnity: 'Professional indemnity',
+  marine: 'Marine',
+  life: 'Life',
+};
+
 const CONTROL_CLASS =
   'rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-teal-400 focus:outline-none focus:ring-2 focus:ring-teal-500/20';
 
 /* ------------------------------------------------------------------ */
-/* Static report datasets                                              */
+/* Derived datasets                                                    */
 /* ------------------------------------------------------------------ */
 
 interface SummaryRow {
@@ -63,40 +71,94 @@ interface SummaryRow {
   tone?: string;
 }
 
-const PORTFOLIO_ROWS: SummaryRow[] = [
-  { key: 'auto', label: 'Auto', sub: 'Personal lines', value: '4,210', secondary: '$18.4M', share: 0.42 },
-  { key: 'home', label: 'Homeowners', sub: 'Personal lines', value: '2,680', secondary: '$12.1M', share: 0.27 },
-  { key: 'comm', label: 'Commercial', sub: 'Small business', value: '1,520', secondary: '$9.8M', share: 0.15 },
-  { key: 'life', label: 'Life', sub: 'Term & whole', value: '980', secondary: '$4.3M', share: 0.1 },
-  { key: 'health', label: 'Health', sub: 'Group & individual', value: '760', secondary: '$2.6M', share: 0.08 },
-  { key: 'umb', label: 'Umbrella', sub: 'Excess liability', value: '410', secondary: '$1.0M', share: 0.04 },
-];
+/** In-force book grouped by line of business, straight from the policy book. */
+const PORTFOLIO_ROWS: SummaryRow[] = (() => {
+  const groups = new Map<string, { count: number; premium: number }>();
+  for (const policy of MOCK_POLICIES) {
+    const entry = groups.get(policy.lineOfBusiness) ?? { count: 0, premium: 0 };
+    entry.count += 1;
+    entry.premium += policy.premium;
+    groups.set(policy.lineOfBusiness, entry);
+  }
+  // Share is measured against the largest book so the bars stay readable.
+  const largest = Math.max(...[...groups.values()].map((value) => value.premium), 1);
+  return [...groups.entries()]
+    .map(([lob, value]) => ({
+      key: lob,
+      label: LOB_LABEL[lob] ?? lob,
+      sub: `${value.count} polic${value.count === 1 ? 'y' : 'ies'}`,
+      value: formatCurrency(value.premium, 'USD', { maximumFractionDigits: 0 }),
+      secondary: `${formatCurrency(value.premium / value.count, 'USD', { maximumFractionDigits: 0 })} avg`,
+      share: value.premium / largest,
+    }))
+    .sort((a, b) => b.share - a.share);
+})();
 
-const CLAIMS_ROWS: SummaryRow[] = [
-  { key: 'collision', label: 'Auto collision', sub: '142 claims', value: '$8.94M', secondary: '64.8%', share: 0.34, tone: 'text-rose-600' },
-  { key: 'property', label: 'Property damage', sub: '96 claims', value: '$5.12M', secondary: '58.2%', share: 0.2 },
-  { key: 'liability', label: 'General liability', sub: '54 claims', value: '$4.36M', secondary: '51.4%', share: 0.17 },
-  { key: 'cargo', label: 'Commercial cargo', sub: '31 claims', value: '$3.74M', secondary: '72.1%', share: 0.14 },
-  { key: 'health', label: 'Health & medical', sub: '68 claims', value: '$2.61M', secondary: '44.9%', share: 0.1 },
-  { key: 'other', label: 'Other', sub: '27 claims', value: '$0.94M', secondary: '38.0%', share: 0.04 },
-];
+/** Incurred loss and loss ratio per cause of loss. */
+const CLAIMS_ROWS: SummaryRow[] = (() => {
+  const groups = new Map<string, { claimed: number; paid: number; count: number }>();
+  for (const claim of MOCK_CLAIMS) {
+    const entry = groups.get(claim.causeOfLoss) ?? { claimed: 0, paid: 0, count: 0 };
+    entry.claimed += claim.amountClaimed;
+    entry.paid += claim.amountPaid;
+    entry.count += 1;
+    groups.set(claim.causeOfLoss, entry);
+  }
+  const rows = [...groups.entries()].map(([cause, value]) => ({
+    key: cause,
+    label: cause,
+    sub: `${value.count} claim${value.count === 1 ? '' : 's'}`,
+    value: formatCurrency(value.claimed, 'USD', { maximumFractionDigits: 0 }),
+    secondary: `${value.claimed > 0 ? Math.round((value.paid / value.claimed) * 100) : 0}% paid`,
+    share: 0,
+    tone: 'text-slate-800' as string,
+  }));
+  const largest = Math.max(...[...groups.values()].map((value) => value.claimed), 1);
+  for (const row of rows) {
+    row.share = (groups.get(row.key)?.claimed ?? 0) / largest;
+  }
+  return rows.sort((a, b) => b.share - a.share).slice(0, 8);
+})();
 
-const FINANCIAL_ROWS: SummaryRow[] = [
-  { key: 'earned', label: 'Earned premium', sub: 'Recognized revenue', value: '$44.9M', secondary: '93.1% of written', share: 1, tone: 'text-teal-700' },
-  { key: 'claims', label: 'Claims incurred', sub: 'Paid + reserve change', value: '$27.7M', secondary: '61.8% loss ratio', share: 0.62 },
-  { key: 'commissions', label: 'Commissions', sub: '42 agents', value: '$3.4M', secondary: '7.1% of premium', share: 0.08 },
-  { key: 'expenses', label: 'Operating expenses', sub: 'G&A + acquisition', value: '$8.6M', secondary: '19.2% expense ratio', share: 0.19 },
-  { key: 'profit', label: 'Underwriting profit', sub: 'Pre-tax', value: '$5.2M', secondary: '11.6% margin', share: 0.11, tone: 'text-teal-700' },
-];
+/** Financial summary — share of written premium for the selected period. */
+const FINANCIAL_ROWS: SummaryRow[] = (() => {
+  const totals = MOCK_PREMIUMS.reduce(
+    (acc, month) => ({
+      written: acc.written + month.writtenPremium,
+      earned: acc.earned + month.earnedPremium,
+      claims: acc.claims + month.claimsIncurred,
+      commission: acc.commission + month.commissionPaid,
+      collected: acc.collected + month.premiumCollected,
+      outstanding: acc.outstanding + month.premiumOutstanding,
+      refunds: acc.refunds + month.refundsIssued,
+    }),
+    { written: 0, earned: 0, claims: 0, commission: 0, collected: 0, outstanding: 0, refunds: 0 },
+  );
+  const money = (value: number) => formatCurrency(value, 'USD', { maximumFractionDigits: 0 });
+  const operating = totals.written - totals.claims - totals.commission - totals.refunds;
+  return [
+    { key: 'earned', label: 'Earned premium', sub: 'Recognized revenue', value: money(totals.earned), secondary: `${formatPercent(totals.earned / totals.written, { digits: 1 })} of written`, share: totals.earned / totals.written, tone: 'text-teal-700' },
+    { key: 'claims', label: 'Claims incurred', sub: 'Paid + reserve movement', value: money(totals.claims), secondary: `${formatPercent(totals.claims / totals.earned, { digits: 1 })} loss ratio`, share: totals.claims / totals.written },
+    { key: 'commission', label: 'Commissions paid', sub: 'Agent & broker payouts', value: money(totals.commission), secondary: `${formatPercent(totals.commission / totals.written, { digits: 1 })} of premium`, share: totals.commission / totals.written },
+    { key: 'collected', label: 'Premium collected', sub: 'Cash received', value: money(totals.collected), secondary: `${money(totals.outstanding)} outstanding`, share: totals.collected / totals.written },
+    { key: 'refunds', label: 'Refunds issued', sub: 'Cancellations & endorsements', value: money(totals.refunds), secondary: `${formatPercent(totals.refunds / totals.written, { digits: 2 })} of premium`, share: totals.refunds / totals.written },
+    { key: 'margin', label: 'Underwriting margin', sub: 'Pre-tax, before expenses', value: money(operating), secondary: `${formatPercent(operating / totals.written, { digits: 1 })} margin`, share: operating / totals.written, tone: 'text-teal-700' },
+  ];
+})();
 
-const AGENT_ROWS: SummaryRow[] = MOCK_TOP_AGENTS.map((agent) => ({
-  key: agent.name,
-  label: agent.name,
-  sub: agent.agency,
-  value: formatCurrency(agent.book),
-  secondary: `${agent.policies} policies · ${formatPercent(agent.retention, 0)} retained`,
-  share: agent.book / 4_820_000,
-}));
+/** Producer leaderboard from the agent book. */
+const AGENT_ROWS: SummaryRow[] = (() => {
+  const sorted = [...MOCK_AGENTS].sort((a, b) => b.bookOfBusiness - a.bookOfBusiness);
+  const largest = sorted[0]?.bookOfBusiness ?? 1;
+  return sorted.map((agent) => ({
+    key: agent.id,
+    label: agent.name,
+    sub: `${agent.agency} · ${agent.performance.replace('_', ' ')}`,
+    value: formatCurrency(agent.bookOfBusiness, 'USD', { maximumFractionDigits: 0 }),
+    secondary: `${formatNumber(agent.policyCount)} policies · ${formatPercent(agent.retentionRate, { digits: 0 })} retained`,
+    share: agent.bookOfBusiness / largest,
+  }));
+})();
 
 const COMPLIANCE_ROWS: SummaryRow[] = [
   { key: 'naic', label: 'NAIC annual statement', sub: 'Due Mar 1, 2027', value: 'On track', secondary: '12 of 12 filings', share: 1, tone: 'text-teal-700' },
@@ -120,39 +182,76 @@ const FINDINGS_BAR = [
   { finding: 'Low', count: 18 },
 ];
 
-const CLAIM_VOLUME = [
-  { month: 'Apr', opened: 118, closed: 104 },
-  { month: 'May', opened: 127, closed: 121 },
-  { month: 'Jun', opened: 141, closed: 133 },
-  { month: 'Jul', opened: 134, closed: 147 },
-  { month: 'Aug', opened: 152, closed: 139 },
-  { month: 'Sep', opened: 146, closed: 158 },
-];
+/** Monthly written vs earned premium. */
+const PREMIUM_SERIES = MOCK_PREMIUMS.map((month) => ({
+  month: month.label.replace(' 2026', ''),
+  written: month.writtenPremium,
+  earned: month.earnedPremium,
+  claims: month.claimsPaid,
+  commission: month.commissionPaid,
+  lossRatio: Math.round(month.lossRatio * 1000) / 10,
+  combined: Math.round(month.combinedRatio * 1000) / 10,
+}));
+
+/** Claims grouped by severity (mock severity is lowercase). */
+const SEVERITY_BAR = (() => {
+  const order = ['critical', 'high', 'medium', 'low'] as const;
+  const counts = new Map<string, number>();
+  for (const claim of MOCK_CLAIMS) {
+    counts.set(claim.severity, (counts.get(claim.severity) ?? 0) + 1);
+  }
+  return order.map((severity) => ({
+    severity: severity[0].toUpperCase() + severity.slice(1),
+    count: counts.get(severity) ?? 0,
+  }));
+})();
+
+const SEVERITY_COLORS: Record<string, string> = {
+  Critical: '#e11d48',
+  High: '#f59e0b',
+  Medium: TEAL,
+  Low: '#94a3b8',
+};
+
+/** Claims reported per month across the book. */
+const CLAIM_VOLUME = (() => {
+  const buckets = new Map<string, { opened: number; paid: number }>();
+  for (const claim of MOCK_CLAIMS) {
+    const date = new Date(claim.reportedAt);
+    if (Number.isNaN(date.getTime())) continue;
+    const key = date.toLocaleDateString('en-US', { month: 'short' });
+    const entry = buckets.get(key) ?? { opened: 0, paid: 0 };
+    entry.opened += 1;
+    entry.paid += claim.amountPaid > 0 ? 1 : 0;
+    buckets.set(key, entry);
+  }
+  return [...buckets.entries()].map(([month, value]) => ({ month, ...value }));
+})();
 
 const METRICS: Record<Tab, { label: string; value: string; hint: string; delta: string; up: boolean }[]> = {
   Portfolio: [
-    { label: 'Policies in force', value: '10,560', hint: '6 lines of business', delta: '+2.6%', up: true },
-    { label: 'Written premium', value: '$48.2M', hint: 'Year to date', delta: '+12.4%', up: true },
-    { label: 'Average premium', value: '$4,568', hint: 'Per policy', delta: '+3.1%', up: true },
-    { label: 'Renewal book', value: '94.2%', hint: '12-month rolling', delta: '+1.3 pts', up: true },
+    { label: 'Policies in force', value: formatNumber(MOCK_POLICIES.length), hint: 'Sample book', delta: '+2.6%', up: true },
+    { label: 'Written premium', value: formatCurrency(MOCK_PREMIUMS.reduce((s, m) => s + m.writtenPremium, 0), 'USD', { notation: 'compact' }), hint: 'Selected range', delta: '+12.4%', up: true },
+    { label: 'New business mix', value: formatPercent(MOCK_PREMIUMS.reduce((s, m) => s + m.newBusinessPremium, 0) / MOCK_PREMIUMS.reduce((s, m) => s + m.writtenPremium, 0), { digits: 1 }), hint: 'vs renewals', delta: '+3.1%', up: true },
+    { label: 'Combined ratio', value: formatPercent(MOCK_PREMIUMS[MOCK_PREMIUMS.length - 1]?.combinedRatio ?? 0, { digits: 1 }), hint: 'Latest month', delta: '−1.4 pts', up: true },
   ],
   Claims: [
-    { label: 'Claims opened', value: '818', hint: 'Apr – Sep', delta: '+4.2%', up: true },
-    { label: 'Claims closed', value: '802', hint: 'Apr – Sep', delta: '+9.6%', up: true },
-    { label: 'Incurred loss', value: '$25.7M', hint: '6 months', delta: '+6.8%', up: true },
-    { label: 'Avg. cycle time', value: '18.4d', hint: 'Report to settlement', delta: '−2.1d', up: true },
+    { label: 'Claims in book', value: formatNumber(MOCK_CLAIMS.length), hint: 'All severities', delta: '+4.2%', up: true },
+    { label: 'Incurred loss', value: formatCurrency(MOCK_PREMIUMS.reduce((s, m) => s + m.claimsIncurred, 0), 'USD', { notation: 'compact' }), hint: 'Selected range', delta: '+6.8%', up: true },
+    { label: 'Paid to date', value: formatCurrency(MOCK_CLAIMS.reduce((s, c) => s + c.amountPaid, 0), 'USD', { notation: 'compact' }), hint: 'Across sampled claims', delta: '+5.1%', up: true },
+    { label: 'Fraud flag rate', value: formatPercent(MOCK_CLAIMS.filter((c) => c.fraudScore >= 60).length / MOCK_CLAIMS.length, { digits: 1 }), hint: 'Score ≥ 60', delta: '−0.6 pts', up: true },
   ],
   Financial: [
-    { label: 'Earned premium', value: '$44.9M', hint: '93.1% of written', delta: '+11.2%', up: true },
-    { label: 'Loss ratio', value: '61.8%', hint: 'Target 62.0%', delta: '+2.4 pts', up: true },
-    { label: 'Expense ratio', value: '19.2%', hint: 'Budget 20.0%', delta: '−0.8 pts', up: true },
-    { label: 'Combined ratio', value: '81.0%', hint: 'Underwriting margin', delta: '−3.4 pts', up: true },
+    { label: 'Earned premium', value: formatCurrency(MOCK_PREMIUMS.reduce((s, m) => s + m.earnedPremium, 0), 'USD', { notation: 'compact' }), hint: 'Recognized', delta: '+11.2%', up: true },
+    { label: 'Loss ratio', value: formatPercent(MOCK_PREMIUMS[MOCK_PREMIUMS.length - 1]?.lossRatio ?? 0, { digits: 1 }), hint: 'Target 62.0%', delta: '+2.4 pts', up: true },
+    { label: 'Expense ratio', value: formatPercent(MOCK_PREMIUMS[MOCK_PREMIUMS.length - 1]?.expenseRatio ?? 0, { digits: 1 }), hint: 'Budget 20.0%', delta: '−0.8 pts', up: true },
+    { label: 'Commission paid', value: formatCurrency(MOCK_PREMIUMS.reduce((s, m) => s + m.commissionPaid, 0), 'USD', { notation: 'compact' }), hint: 'Selected range', delta: '+7.4%', up: true },
   ],
   Agents: [
-    { label: 'Active agents', value: '42', hint: '11 agencies', delta: '+3', up: true },
-    { label: 'Book under management', value: '$17.1M', hint: 'Top 5 agents', delta: '+8.9%', up: true },
-    { label: 'Avg. retention', value: '93.2%', hint: 'Top 5 agents', delta: '+1.1 pts', up: true },
-    { label: 'Commission paid', value: '$3.4M', hint: 'Year to date', delta: '+7.4%', up: true },
+    { label: 'Active agents', value: formatNumber(MOCK_AGENTS.filter((a) => a.status === 'active').length), hint: `${MOCK_AGENTS.length} appointed`, delta: '+3', up: true },
+    { label: 'Book under management', value: formatCurrency(MOCK_AGENTS.reduce((s, a) => s + a.bookOfBusiness, 0), 'USD', { notation: 'compact' }), hint: 'All agents', delta: '+8.9%', up: true },
+    { label: 'Avg. retention', value: formatPercent(MOCK_AGENTS.reduce((s, a) => s + a.retentionRate, 0) / MOCK_AGENTS.length, { digits: 1 }), hint: 'Trailing 12 months', delta: '+1.1 pts', up: true },
+    { label: 'Commission YTD', value: formatCurrency(MOCK_AGENTS.reduce((s, a) => s + a.commissionYtd, 0), 'USD', { notation: 'compact' }), hint: 'Paid to agents', delta: '+7.4%', up: true },
   ],
   Compliance: [
     { label: 'Filings on time', value: '34 / 37', hint: 'Rolling 12 months', delta: '91.9%', up: true },
@@ -225,7 +324,8 @@ function SummaryTable({
                 key={col.label}
                 className={cn(
                   'pb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400',
-                  col.align === 'right' && 'text-right',
+                  i > 0 && 'text-right',
+                  col.align === 'left' && 'text-left',
                 )}
               >
                 {col.label}
@@ -236,7 +336,7 @@ function SummaryTable({
         <tbody>
           {rows.map((row) => (
             <tr key={row.key} className="border-b border-slate-100 last:border-0">
-              <td className="py-2.5 pr-4">
+              <td className="py-2.5 pr-4 text-left">
                 <p className="font-medium text-slate-800">{row.label}</p>
                 {row.sub ? <p className="text-xs text-slate-400">{row.sub}</p> : null}
               </td>
@@ -244,8 +344,10 @@ function SummaryTable({
                 {row.value}
               </td>
               <td className="py-2.5 pr-4 text-right text-xs text-slate-500">{row.secondary}</td>
-              <td className="py-2.5">
-                <ShareBar share={row.share} />
+              <td className="py-2.5 text-right">
+                <div className="flex justify-end">
+                  <ShareBar share={row.share} />
+                </div>
               </td>
             </tr>
           ))}
@@ -281,15 +383,15 @@ function MetricStrip({ tab }: { tab: Tab }) {
 /* ------------------------------------------------------------------ */
 
 function PortfolioTab() {
-  const mixTotal = 4_210 + 2_680 + 1_520 + 980 + 760 + 410;
-  const mix = [
-    { type: 'Auto', value: 4_210 },
-    { type: 'Homeowners', value: 2_680 },
-    { type: 'Commercial', value: 1_520 },
-    { type: 'Life', value: 980 },
-    { type: 'Health', value: 760 },
-    { type: 'Umbrella', value: 410 },
-  ];
+  const mix = (() => {
+    const counts = new Map<string, number>();
+    for (const policy of MOCK_POLICIES) {
+      counts.set(policy.lineOfBusiness, (counts.get(policy.lineOfBusiness) ?? 0) + 1);
+    }
+    return [...counts.entries()]
+      .map(([lob, value]) => ({ type: LOB_LABEL[lob] ?? lob, value }))
+      .sort((a, b) => b.value - a.value);
+  })();
 
   return (
     <div className="space-y-6">
@@ -297,20 +399,20 @@ function PortfolioTab() {
         <Card className="lg:col-span-2">
           <div className="mb-4 flex items-center justify-between">
             <div>
-              <CardTitle>Written premium vs claims paid</CardTitle>
+              <CardTitle>Written vs earned premium</CardTitle>
               <p className="mt-1 text-xs text-slate-500">Monthly trend across the selected range</p>
             </div>
             <Badge variant="outline">Area</Badge>
           </div>
           <div className="h-64 w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={MOCK_PREMIUM_CLAIMS} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+              <AreaChart data={PREMIUM_SERIES} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
                 <defs>
                   <linearGradient id="repPremiumFill" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor={TEAL} stopOpacity={0.35} />
                     <stop offset="100%" stopColor={TEAL} stopOpacity={0.02} />
                   </linearGradient>
-                  <linearGradient id="repClaimsFill" x1="0" y1="0" x2="0" y2="1">
+                  <linearGradient id="repEarnedFill" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor={TEAL_SOFT} stopOpacity={0.5} />
                     <stop offset="100%" stopColor={TEAL_SOFT} stopOpacity={0.05} />
                   </linearGradient>
@@ -321,12 +423,12 @@ function PortfolioTab() {
                   tickLine={false}
                   axisLine={false}
                   tick={{ fontSize: 11, fill: '#64748b' }}
-                  tickFormatter={(v) => `${Math.round(v / 1_000_000)}M`}
+                  tickFormatter={(v: number) => `${Math.round(v / 1_000_000)}M`}
                   width={40}
                 />
-                <Tooltip content={<ChartTooltip formatter={(v: number) => formatCurrency(v)} />} />
-                <Area type="monotone" dataKey="premium" stroke={TEAL} strokeWidth={2} fill="url(#repPremiumFill)" />
-                <Area type="monotone" dataKey="claims" stroke={TEAL_SOFT} strokeWidth={2} fill="url(#repClaimsFill)" />
+                <Tooltip content={<ChartTooltip formatter={(v: number) => formatCurrency(v, 'USD', { maximumFractionDigits: 0 })} />} />
+                <Area type="monotone" dataKey="written" stroke={TEAL} strokeWidth={2} fill="url(#repPremiumFill)" />
+                <Area type="monotone" dataKey="earned" stroke={TEAL_SOFT} strokeWidth={2} fill="url(#repEarnedFill)" />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -350,7 +452,7 @@ function PortfolioTab() {
             </ResponsiveContainer>
           </div>
           <p className="mt-2 text-center text-xs text-slate-500">
-            {formatNumber(mixTotal)} policies in force
+            {formatNumber(MOCK_POLICIES.length)} policies in the sample book
           </p>
         </Card>
       </div>
@@ -359,12 +461,12 @@ function PortfolioTab() {
         <div className="mb-4 flex items-center justify-between">
           <div>
             <CardTitle>Portfolio summary by line of business</CardTitle>
-            <p className="mt-1 text-xs text-slate-500">Share of in-force policy count</p>
+            <p className="mt-1 text-xs text-slate-500">Premium share across the book</p>
           </div>
-          <Badge variant="outline">6 lines</Badge>
+          <Badge variant="outline">{PORTFOLIO_ROWS.length} lines</Badge>
         </div>
         <SummaryTable
-          head={[{ label: 'Line of business' }, { label: 'Policies', align: 'right' }, { label: 'Premium', align: 'right' }, { label: 'Share' }]}
+          head={[{ label: 'Line of business', align: 'left' }, { label: 'Premium', align: 'right' }, { label: 'Detail', align: 'right' }, { label: 'Share', align: 'right' }]}
           rows={PORTFOLIO_ROWS}
         />
       </Card>
@@ -383,13 +485,16 @@ function ClaimsTab() {
           </div>
           <div className="h-64 w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={CLAIM_VOLUME} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+              <BarChart data={SEVERITY_BAR} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-                <XAxis dataKey="month" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: '#64748b' }} />
-                <YAxis tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: '#64748b' }} width={32} />
+                <XAxis dataKey="severity" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: '#64748b' }} />
+                <YAxis tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: '#64748b' }} width={32} allowDecimals={false} />
                 <Tooltip content={<ChartTooltip formatter={(v: number) => `${formatNumber(v)} claims`} />} />
-                <Bar dataKey="opened" fill={TEAL} radius={[4, 4, 0, 0]} />
-                <Bar dataKey="closed" fill={TEAL_SOFT} radius={[4, 4, 0, 0]} />
+                <Bar dataKey="count" radius={[4, 4, 0, 0]}>
+                  {SEVERITY_BAR.map((entry) => (
+                    <Cell key={entry.severity} fill={SEVERITY_COLORS[entry.severity] ?? TEAL} />
+                  ))}
+                </Bar>
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -398,17 +503,17 @@ function ClaimsTab() {
         <Card className="lg:col-span-2">
           <div className="mb-4 flex items-center justify-between">
             <div>
-              <CardTitle>Opened vs closed volume</CardTitle>
-              <p className="mt-1 text-xs text-slate-500">Six-month claim throughput</p>
+              <CardTitle>Reported vs paid claims</CardTitle>
+              <p className="mt-1 text-xs text-slate-500">Claim throughput by month</p>
             </div>
             <div className="flex items-center gap-4 text-xs font-medium text-slate-600">
               <span className="flex items-center gap-1.5">
                 <span className="h-2.5 w-2.5 rounded-full" style={{ background: TEAL }} />
-                Opened
+                Reported
               </span>
               <span className="flex items-center gap-1.5">
                 <span className="h-2.5 w-2.5 rounded-full" style={{ background: TEAL_SOFT }} />
-                Closed
+                Paid
               </span>
             </div>
           </div>
@@ -423,10 +528,10 @@ function ClaimsTab() {
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
                 <XAxis dataKey="month" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: '#64748b' }} />
-                <YAxis tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: '#64748b' }} width={32} />
+                <YAxis tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: '#64748b' }} width={32} allowDecimals={false} />
                 <Tooltip content={<ChartTooltip formatter={(v: number) => `${formatNumber(v)} claims`} />} />
                 <Area type="monotone" dataKey="opened" stroke={TEAL} strokeWidth={2} fill="url(#openedFill)" />
-                <Area type="monotone" dataKey="closed" stroke={TEAL_SOFT} strokeWidth={2} fill="none" />
+                <Area type="monotone" dataKey="paid" stroke={TEAL_SOFT} strokeWidth={2} fill="none" />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -437,12 +542,12 @@ function ClaimsTab() {
         <div className="mb-4 flex items-center justify-between">
           <div>
             <CardTitle>Incurred loss by cause of loss</CardTitle>
-            <p className="mt-1 text-xs text-slate-500">Share of total incurred, with pure loss ratio</p>
+            <p className="mt-1 text-xs text-slate-500">Claimed amount and payout ratio per cause</p>
           </div>
-          <Badge variant="outline">$25.7M incurred</Badge>
+          <Badge variant="outline">{MOCK_CLAIMS.length} claims</Badge>
         </div>
         <SummaryTable
-          head={[{ label: 'Cause of loss' }, { label: 'Incurred', align: 'right' }, { label: 'Loss ratio', align: 'right' }, { label: 'Share' }]}
+          head={[{ label: 'Cause of loss', align: 'left' }, { label: 'Claimed', align: 'right' }, { label: 'Paid ratio', align: 'right' }, { label: 'Share', align: 'right' }]}
           rows={CLAIMS_ROWS}
         />
       </Card>
@@ -457,16 +562,16 @@ function FinancialTab() {
         <Card className="lg:col-span-2">
           <div className="mb-4 flex items-center justify-between">
             <div>
-              <CardTitle>Commission outflow vs written premium</CardTitle>
-              <p className="mt-1 text-xs text-slate-500">Monthly acquisition cost</p>
+              <CardTitle>Claims paid vs commission outflow</CardTitle>
+              <p className="mt-1 text-xs text-slate-500">Monthly cost of the book</p>
             </div>
             <Badge variant="outline">Area</Badge>
           </div>
           <div className="h-64 w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={MOCK_COMMISSION_SPEND} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+              <AreaChart data={PREMIUM_SERIES} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
                 <defs>
-                  <linearGradient id="commissionFill" x1="0" y1="0" x2="0" y2="1">
+                  <linearGradient id="claimsPaidFill" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor={TEAL} stopOpacity={0.35} />
                     <stop offset="100%" stopColor={TEAL} stopOpacity={0.02} />
                   </linearGradient>
@@ -477,12 +582,12 @@ function FinancialTab() {
                   tickLine={false}
                   axisLine={false}
                   tick={{ fontSize: 11, fill: '#64748b' }}
-                  tickFormatter={(v) => `${Math.round(v / 1_000_000)}M`}
+                  tickFormatter={(v: number) => `${Math.round(v / 1_000_000)}M`}
                   width={40}
                 />
-                <Tooltip content={<ChartTooltip formatter={(v: number) => formatCurrency(v)} />} />
-                <Area type="monotone" dataKey="premium" stroke={TEAL_SOFT} strokeWidth={2} fill="none" />
-                <Area type="monotone" dataKey="commission" stroke={TEAL} strokeWidth={2} fill="url(#commissionFill)" />
+                <Tooltip content={<ChartTooltip formatter={(v: number) => formatCurrency(v, 'USD', { maximumFractionDigits: 0 })} />} />
+                <Area type="monotone" dataKey="claims" stroke={TEAL} strokeWidth={2} fill="url(#claimsPaidFill)" />
+                <Area type="monotone" dataKey="commission" stroke={TEAL_SOFT} strokeWidth={2} fill="none" />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -490,34 +595,18 @@ function FinancialTab() {
 
         <Card>
           <div className="mb-4 flex items-center justify-between">
-            <CardTitle>Loss ratio by product</CardTitle>
+            <CardTitle>Loss & combined ratio</CardTitle>
             <Badge variant="warning">Target 62%</Badge>
           </div>
           <div className="h-64 w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart
-                data={[
-                  { product: 'Auto', lossRatio: 68.4 },
-                  { product: 'Home', lossRatio: 57.2 },
-                  { product: 'Comm', lossRatio: 63.9 },
-                  { product: 'Life', lossRatio: 41.5 },
-                  { product: 'Health', lossRatio: 71.8 },
-                ]}
-                layout="vertical"
-                margin={{ top: 0, right: 12, left: 0, bottom: 0 }}
-              >
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" horizontal={false} />
-                <XAxis type="number" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: '#64748b' }} />
-                <YAxis
-                  type="category"
-                  dataKey="product"
-                  tickLine={false}
-                  axisLine={false}
-                  tick={{ fontSize: 11, fill: '#64748b' }}
-                  width={54}
-                />
+              <BarChart data={PREMIUM_SERIES} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+                <XAxis dataKey="month" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: '#64748b' }} />
+                <YAxis tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: '#64748b' }} width={32} unit="%" />
                 <Tooltip content={<ChartTooltip formatter={(v: number) => `${v.toFixed(1)}%`} />} />
-                <Bar dataKey="lossRatio" fill={TEAL} radius={[0, 4, 4, 0]} barSize={14} />
+                <Bar dataKey="lossRatio" fill={TEAL} radius={[4, 4, 0, 0]} />
+                <Bar dataKey="combined" fill={TEAL_SOFT} radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -528,12 +617,12 @@ function FinancialTab() {
         <div className="mb-4 flex items-center justify-between">
           <div>
             <CardTitle>Financial summary</CardTitle>
-            <p className="mt-1 text-xs text-slate-500">Share of earned premium</p>
+            <p className="mt-1 text-xs text-slate-500">Share of written premium for the range</p>
           </div>
           <Badge variant="outline">YTD</Badge>
         </div>
         <SummaryTable
-          head={[{ label: 'Line item' }, { label: 'Amount', align: 'right' }, { label: 'Ratio', align: 'right' }, { label: 'Share' }]}
+          head={[{ label: 'Line item', align: 'left' }, { label: 'Amount', align: 'right' }, { label: 'Ratio', align: 'right' }, { label: 'Share', align: 'right' }]}
           rows={FINANCIAL_ROWS}
         />
       </Card>
@@ -542,8 +631,6 @@ function FinancialTab() {
 }
 
 function AgentsTab() {
-  const maxRetention = Math.max(...MOCK_RETENTION_TREND.map((r) => r.retention));
-
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
@@ -551,23 +638,28 @@ function AgentsTab() {
           <div className="mb-4 flex items-center justify-between">
             <div>
               <CardTitle>Book of business by agent</CardTitle>
-              <p className="mt-1 text-xs text-slate-500">Top five producers</p>
+              <p className="mt-1 text-xs text-slate-500">Appointed producers ranked by premium</p>
             </div>
             <Badge variant="outline">Bar</Badge>
           </div>
           <div className="h-64 w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={MOCK_TOP_AGENTS} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+              <BarChart
+                data={[...MOCK_AGENTS]
+                  .sort((a, b) => b.bookOfBusiness - a.bookOfBusiness)
+                  .map((agent) => ({ name: agent.name.split(' ')[0], book: agent.bookOfBusiness }))}
+                margin={{ top: 4, right: 8, left: 0, bottom: 0 }}
+              >
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
                 <XAxis dataKey="name" tickLine={false} axisLine={false} tick={{ fontSize: 10, fill: '#64748b' }} />
                 <YAxis
                   tickLine={false}
                   axisLine={false}
                   tick={{ fontSize: 11, fill: '#64748b' }}
-                  tickFormatter={(v) => `${Math.round(v / 1_000_000)}M`}
+                  tickFormatter={(v: number) => `${Math.round(v / 1_000_000)}M`}
                   width={40}
                 />
-                <Tooltip content={<ChartTooltip formatter={(v: number) => formatCurrency(v)} />} />
+                <Tooltip content={<ChartTooltip formatter={(v: number) => formatCurrency(v, 'USD', { maximumFractionDigits: 0 })} />} />
                 <Bar dataKey="book" fill={TEAL} radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
@@ -576,33 +668,34 @@ function AgentsTab() {
 
         <Card>
           <div className="mb-4 flex items-center justify-between">
-            <CardTitle>Retention trend</CardTitle>
-            <Badge variant="success">94.2%</Badge>
+            <CardTitle>Retention by agent</CardTitle>
+            <Badge variant="success">
+              {formatPercent(MOCK_AGENTS.reduce((s, a) => s + a.retentionRate, 0) / MOCK_AGENTS.length, { digits: 1 })}
+            </Badge>
           </div>
-          <div className="h-64 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={MOCK_RETENTION_TREND} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="retentionFill" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor={TEAL} stopOpacity={0.35} />
-                    <stop offset="100%" stopColor={TEAL} stopOpacity={0.02} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-                <XAxis dataKey="month" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: '#64748b' }} />
-                <YAxis
-                  tickLine={false}
-                  axisLine={false}
-                  tick={{ fontSize: 11, fill: '#64748b' }}
-                  domain={[Math.floor(maxRetention) - 5, Math.ceil(maxRetention) + 1]}
-                  tickFormatter={(v) => `${v}%`}
-                  width={38}
-                />
-                <Tooltip content={<ChartTooltip formatter={(v: number) => `${v.toFixed(1)}%`} />} />
-                <Area type="monotone" dataKey="retention" stroke={TEAL} strokeWidth={2} fill="url(#retentionFill)" />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
+          <ul className="space-y-3">
+            {[...MOCK_AGENTS]
+              .sort((a, b) => b.retentionRate - a.retentionRate)
+              .map((agent) => (
+                <li key={agent.id}>
+                  <div className="mb-1 flex items-center justify-between text-xs">
+                    <span className="font-medium text-slate-700">{agent.name}</span>
+                    <span className="tabular-nums text-slate-500">
+                      {formatPercent(agent.retentionRate, { digits: 0 })}
+                    </span>
+                  </div>
+                  <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
+                    <div
+                      className="h-full rounded-full"
+                      style={{
+                        width: `${agent.retentionRate * 100}%`,
+                        background: `linear-gradient(90deg, ${TEAL} 0%, ${TEAL_SOFT} 100%)`,
+                      }}
+                    />
+                  </div>
+                </li>
+              ))}
+          </ul>
         </Card>
       </div>
 
@@ -610,12 +703,12 @@ function AgentsTab() {
         <div className="mb-4 flex items-center justify-between">
           <div>
             <CardTitle>Agent production summary</CardTitle>
-            <p className="mt-1 text-xs text-slate-500">Share of managed book across top producers</p>
+            <p className="mt-1 text-xs text-slate-500">Share of managed book across appointed agents</p>
           </div>
-          <Badge variant="outline">42 agents total</Badge>
+          <Badge variant="outline">{MOCK_AGENTS.length} agents</Badge>
         </div>
         <SummaryTable
-          head={[{ label: 'Agent' }, { label: 'Book', align: 'right' }, { label: 'Detail', align: 'right' }, { label: 'Share' }]}
+          head={[{ label: 'Agent', align: 'left' }, { label: 'Book', align: 'right' }, { label: 'Detail', align: 'right' }, { label: 'Share', align: 'right' }]}
           rows={AGENT_ROWS}
         />
       </Card>
@@ -672,7 +765,7 @@ function ComplianceTab() {
               <BarChart data={FINDINGS_BAR} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
                 <XAxis dataKey="finding" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: '#64748b' }} />
-                <YAxis tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: '#64748b' }} width={32} />
+                <YAxis tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: '#64748b' }} width={32} allowDecimals={false} />
                 <Tooltip content={<ChartTooltip formatter={(v: number) => `${formatNumber(v)} findings`} />} />
                 <Bar dataKey="count" radius={[4, 4, 0, 0]}>
                   {FINDINGS_BAR.map((entry, index) => (
@@ -697,7 +790,7 @@ function ComplianceTab() {
           <Badge variant="outline">NAIC · State DOI · SOX</Badge>
         </div>
         <SummaryTable
-          head={[{ label: 'Obligation' }, { label: 'Status', align: 'right' }, { label: 'Detail', align: 'right' }, { label: 'Progress' }]}
+          head={[{ label: 'Obligation', align: 'left' }, { label: 'Status', align: 'right' }, { label: 'Detail', align: 'right' }, { label: 'Progress', align: 'right' }]}
           rows={COMPLIANCE_ROWS}
         />
       </Card>
@@ -720,12 +813,11 @@ export default function ReportsPage() {
     RANGE_PRESETS.find((preset) => preset.value === range)?.label ?? 'Custom range';
 
   function handleExport(kind: 'CSV' | 'PDF' | 'Schedule') {
-    const window =
-      range === 'custom' ? `${fromDate} → ${toDate}` : rangeLabel;
+    const windowLabel = range === 'custom' ? `${fromDate} → ${toDate}` : rangeLabel;
     setNotice(
       kind === 'Schedule'
-        ? `Weekly ${activeTab} report scheduled · ${window} · delivered Mondays 07:00`
-        : `${activeTab} report queued as ${kind} · ${window}`,
+        ? `Weekly ${activeTab} report scheduled · ${windowLabel} · delivered Mondays 07:00`
+        : `${activeTab} report queued as ${kind} · ${windowLabel}`,
     );
     window.setTimeout(() => setNotice(null), 4000);
   }
