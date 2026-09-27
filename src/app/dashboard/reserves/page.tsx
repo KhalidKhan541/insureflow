@@ -19,6 +19,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Card, CardTitle } from '@/components/ui/Card';
 import MetricCard from '@/components/ui/MetricCard';
 import { MOCK_RESERVES } from '@/lib/mock-data';
+import type { Reserve } from '@/lib/mock-data';
 import { cn, formatCurrency, formatNumber, formatPercent } from '@/lib/utils';
 
 const TEAL = '#0d9488';
@@ -62,8 +63,18 @@ const adequacyVariant: Record<string, 'success' | 'warning' | 'destructive' | 's
 
 type Adequacy = keyof typeof adequacyVariant;
 
+/**
+ * Mock reserve statuses are lowercase (`under_review`, `released`, …); this page
+ * works with display labels, so normalize before comparing or rendering.
+ */
+function displayStatus(status: Reserve['status']): StatusFilter {
+  if (status === 'released') return 'Closed';
+  if (status === 'under_review' || status === 'increase_requested') return 'Under Review';
+  return 'Open';
+}
+
 function adequacyFor(row: (typeof MOCK_RESERVES)[number]): Adequacy {
-  if (row.status === 'Closed') return 'Settled';
+  if (row.status === 'released') return 'Settled';
   const pool = row.paid + row.currentReserve;
   if (pool <= 0) return 'Deficient';
   const consumed = row.paid / pool;
@@ -151,7 +162,7 @@ export default function ReservesPage() {
   const filteredRows = useMemo(() => {
     const q = query.trim().toLowerCase();
     return MOCK_RESERVES.filter((row) => {
-      if (statusFilter !== 'All' && row.status !== statusFilter) return false;
+      if (statusFilter !== 'All' && displayStatus(row.status) !== statusFilter) return false;
       if (!q) return true;
       return [row.claimNumber, row.claimant, row.policyNumber, row.adjuster, row.reserveType]
         .join(' ')
@@ -406,6 +417,7 @@ export default function ReservesPage() {
                       ? ((row.currentReserve - row.initialReserve) / row.initialReserve) * 100
                       : 0;
                   const adequacy = adequacyFor(row);
+                  const status = displayStatus(row.status);
                   return (
                     <tr key={row.id} className="transition hover:bg-teal-50/40">
                       <td className="px-3 py-2.5">
@@ -451,7 +463,7 @@ export default function ReservesPage() {
                         {row.lastReview}
                       </td>
                       <td className="px-3 py-2.5">
-                        <Badge variant={statusVariant[row.status] ?? 'secondary'}>{row.status}</Badge>
+                        <Badge variant={statusVariant[status] ?? 'secondary'}>{status}</Badge>
                       </td>
                     </tr>
                   );
