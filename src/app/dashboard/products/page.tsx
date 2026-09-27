@@ -5,15 +5,27 @@ import { useMemo, useState } from 'react';
 import { Badge, type BadgeVariant } from '@/components/ui/Badge';
 import { Card, CardTitle } from '@/components/ui/Card';
 import MetricCard from '@/components/ui/MetricCard';
-import { MOCK_PRODUCTS } from '@/lib/mock-data';
+import { MOCK_CLAIMS, MOCK_PRODUCTS } from '@/lib/mock-data';
 import { cn, formatCurrency, formatNumber, formatPercent } from '@/lib/utils';
 
 const TEAL = '#0d9488';
+const TARGET_LOSS_RATIO = 0.62;
 
-/** Mock stores ratios either as a fraction (0.684) or as a percentage (68.4). */
-function asFraction(value: number): number {
-  return value > 1 ? value / 100 : value;
-}
+/** Catalog category (auto / home / life / commercial / cyber) per line of business. */
+const CATEGORY_BY_LOB: Record<string, string> = {
+  personal_auto: 'auto',
+  homeowners: 'home',
+  life: 'life',
+  cyber: 'cyber',
+  commercial_auto: 'commercial',
+  commercial_property: 'commercial',
+  general_liability: 'commercial',
+  workers_compensation: 'commercial',
+  professional_indemnity: 'commercial',
+  marine: 'commercial',
+};
+
+const CATEGORY_ORDER = ['auto', 'home', 'life', 'commercial', 'cyber'];
 
 const CATEGORY_LABEL: Record<string, string> = {
   auto: 'Auto',
@@ -31,8 +43,6 @@ const STATUS_META: Record<string, { label: string; variant: BadgeVariant }> = {
   paused: { label: 'Paused', variant: 'secondary' },
 };
 
-const TARGET_LOSS_RATIO = 0.62;
-
 function lossTone(fraction: number) {
   if (fraction <= TARGET_LOSS_RATIO) return { color: TEAL, label: 'Within target' };
   if (fraction <= 0.7) return { color: '#f59e0b', label: 'Watch' };
@@ -46,38 +56,65 @@ function labelFor(value: string, map: Record<string, string>): string {
 }
 
 function statusMeta(value: string) {
-  return STATUS_META[value.toLowerCase()] ?? { label: value, variant: 'outline' as BadgeVariant };
+  return STATUS_META[value.toLowerCase()] ?? { label: labelFor(value, STATUS_LABEL), variant: 'outline' as BadgeVariant };
+}
+
+const STATUS_LABEL: Record<string, string> = {};
+
+function categoryOf(lineOfBusiness: string): string {
+  return CATEGORY_BY_LOB[lineOfBusiness] ?? 'other';
 }
 
 export default function ProductsPage() {
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState('all');
 
-  const categories = useMemo(
-    () => ['all', ...Array.from(new Set(MOCK_PRODUCTS.map((p) => String(p.category))))],
-    [],
-  );
+  /** Average claim size per line of business — each line maps to one product. */
+  const claimStats = useMemo(() => {
+    const acc = new Map<string, { sum: number; count: number }>();
+    for (const claim of MOCK_CLAIMS) {
+      const entry = acc.get(claim.lineOfBusiness) ?? { sum: 0, count: 0 };
+      entry.sum += claim.amountClaimed;
+      entry.count += 1;
+      acc.set(claim.lineOfBusiness, entry);
+    }
+    return acc;
+  }, []);
+
+  const categories = useMemo(() => {
+    const present = new Set(MOCK_PRODUCTS.map((product) => categoryOf(product.lineOfBusiness)));
+    const ordered = CATEGORY_ORDER.filter((value) => present.has(value));
+    for (const value of present) if (!CATEGORY_ORDER.includes(value)) ordered.push(value);
+    return ['all', ...ordered];
+  }, []);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return MOCK_PRODUCTS.filter((product) => {
-      const matchesCategory = category === 'all' || String(product.category) === category;
-      if (!matchesCategory) return false;
+      const group = categoryOf(product.lineOfBusiness);
+      if (category !== 'all' && group !== category) return false;
       if (!q) return true;
-      return [product.name, product.code, String(product.category)]
+      return [
+        product.name,
+        product.code,
+        product.category,
+        product.lineOfBusiness,
+        group,
+        labelFor(group, CATEGORY_LABEL),
+      ]
         .join(' ')
         .toLowerCase()
         .includes(q);
     });
   }, [query, category]);
 
-  const totalPolicies = MOCK_PRODUCTS.reduce((sum, p) => sum + p.policiesInForce, 0);
-  const totalWritten = MOCK_PRODUCTS.reduce((sum, p) => sum + p.writtenPremium, 0);
+  const totalPolicies = MOCK_PRODUCTS.reduce((sum, product) => sum + product.policiesInForce, 0);
+  const totalWritten = MOCK_PRODUCTS.reduce((sum, product) => sum + product.writtenPremium, 0);
   const blendedLossRatio =
-    MOCK_PRODUCTS.reduce((sum, p) => sum + asFraction(p.lossRatio), 0) / MOCK_PRODUCTS.length;
+    MOCK_PRODUCTS.reduce((sum, product) => sum + product.lossRatio, 0) / MOCK_PRODUCTS.length;
 
-  const statusCounts = MOCK_PRODUCTS.reduce<Record<string, number>>((acc, p) => {
-    const key = statusMeta(String(p.status)).label.toLowerCase();
+  const statusCounts = MOCK_PRODUCTS.reduce<Record<string, number>>((acc, product) => {
+    const key = statusMeta(product.status).label.toLowerCase();
     acc[key] = (acc[key] ?? 0) + 1;
     return acc;
   }, {});
@@ -87,6 +124,11 @@ export default function ProductsPage() {
   const clearFilters = () => {
     setQuery('');
     setCategory('all');
+  };
+
+  const avgClaimFor = (lineOfBusiness: string): number | null => {
+    const entry = claimStats.get(lineOfBusiness);
+    return entry && entry.count > 0 ? entry.sum / entry.count : null;
   };
 
   return (
@@ -124,7 +166,7 @@ export default function ProductsPage() {
         />
         <MetricCard
           label="Blended loss ratio"
-          value={formatPercent(blendedLossRatio)}
+          value={formatPercent(blendedLossRatio, { digits: 1 })}
           hint={`Target ≤ ${formatPercent(TARGET_LOSS_RATIO, { digits: 0 })}`}
         />
       </div>
@@ -199,16 +241,17 @@ export default function ProductsPage() {
       {filtered.length > 0 ? (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
           {filtered.map((product) => {
-            const lossRatio = asFraction(product.lossRatio);
-            const tone = lossTone(lossRatio);
-            const status = statusMeta(String(product.status));
+            const group = categoryOf(product.lineOfBusiness);
+            const tone = lossTone(product.lossRatio);
+            const status = statusMeta(product.status);
+            const claimSize = avgClaimFor(product.lineOfBusiness);
 
             return (
               <Card key={product.id} className="flex flex-col">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
-                      {product.code} · {labelFor(String(product.category), CATEGORY_LABEL)}
+                      {product.code} · {labelFor(group, CATEGORY_LABEL)}
                     </p>
                     <h2 className="mt-1 truncate text-sm font-semibold text-slate-800">
                       {product.name}
@@ -226,7 +269,7 @@ export default function ProductsPage() {
                       Base premium
                     </p>
                     <p className="mt-1 text-sm font-semibold tabular-nums text-slate-800">
-                      {formatCurrency(product.basePremium)}
+                      {formatCurrency(product.pricing.basePremium)}
                     </p>
                   </div>
                   <div className="rounded-lg border border-slate-200/80 bg-slate-50/60 p-3">
@@ -250,7 +293,7 @@ export default function ProductsPage() {
                       Avg claim size
                     </p>
                     <p className="mt-1 text-sm font-semibold tabular-nums text-slate-800">
-                      {formatCurrency(product.avgClaimSize)}
+                      {claimSize === null ? '—' : formatCurrency(claimSize)}
                     </p>
                   </div>
                 </div>
@@ -259,14 +302,14 @@ export default function ProductsPage() {
                   <div className="flex items-center justify-between text-xs">
                     <span className="font-medium text-slate-500">Loss ratio</span>
                     <span className="font-semibold tabular-nums" style={{ color: tone.color }}>
-                      {formatPercent(lossRatio)}
+                      {formatPercent(product.lossRatio, { digits: 1 })}
                     </span>
                   </div>
                   <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-slate-100">
                     <div
                       className="h-full rounded-full transition-all duration-500"
                       style={{
-                        width: `${Math.min(lossRatio, 1) * 100}%`,
+                        width: `${Math.min(Math.max(product.lossRatio, 0), 1) * 100}%`,
                         background: `linear-gradient(90deg, ${tone.color}66 0%, ${tone.color} 100%)`,
                       }}
                     />
