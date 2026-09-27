@@ -16,6 +16,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Card, CardTitle } from '@/components/ui/Card';
 import MetricCard from '@/components/ui/MetricCard';
 import { MOCK_COMMISSIONS } from '@/lib/mock-data';
+import type { Commission } from '@/lib/mock-data';
 import { cn, formatCurrency, formatNumber, formatPercent } from '@/lib/utils';
 
 const TEAL = '#0d9488';
@@ -23,6 +24,17 @@ const TEAL_SOFT = '#5eead4';
 
 const STATUS_FILTERS = ['All', 'Accrued', 'Paid', 'Held'] as const;
 type StatusFilter = (typeof STATUS_FILTERS)[number];
+type DisplayStatus = Exclude<StatusFilter, 'All'>;
+
+/**
+ * Mock commission statuses are lowercase (`pending`, `paid`, …); this page works
+ * with display labels, so normalize before comparing or rendering.
+ */
+function displayStatus(status: Commission['status']): DisplayStatus {
+  if (status === 'paid') return 'Paid';
+  if (status === 'pending' || status === 'approved') return 'Accrued';
+  return 'Held';
+}
 
 const STATUS_TONES: Record<string, 'default' | 'success' | 'warning'> = {
   Accrued: 'default',
@@ -63,8 +75,9 @@ export default function CommissionsPage() {
     for (const row of MOCK_COMMISSIONS) {
       acc.gross += row.grossPremium;
       acc.earned += row.earned;
-      if (row.status === 'Paid') acc.paid += row.earned;
-      else if (row.status === 'Accrued') acc.accrued += row.earned;
+      const status = displayStatus(row.status);
+      if (status === 'Paid') acc.paid += row.earned;
+      else if (status === 'Accrued') acc.accrued += row.earned;
       else acc.held += row.earned;
     }
     return acc;
@@ -91,7 +104,7 @@ export default function CommissionsPage() {
   const statusBreakdown = useMemo(
     () =>
       (['Accrued', 'Paid', 'Held'] as const).map((status) => {
-        const rows = MOCK_COMMISSIONS.filter((row) => row.status === status);
+        const rows = MOCK_COMMISSIONS.filter((row) => displayStatus(row.status) === status);
         return {
           status,
           count: rows.length,
@@ -104,7 +117,7 @@ export default function CommissionsPage() {
   const filteredRows = useMemo(() => {
     const q = query.trim().toLowerCase();
     return MOCK_COMMISSIONS.filter((row) => {
-      if (statusFilter !== 'All' && row.status !== statusFilter) return false;
+      if (statusFilter !== 'All' && displayStatus(row.status) !== statusFilter) return false;
       if (!q) return true;
       return [row.statement, row.payee, row.agency, row.payeeType, row.policyNumber, row.period]
         .join(' ')
@@ -317,11 +330,13 @@ export default function CommissionsPage() {
                   </td>
                 </tr>
               ) : (
-                filteredRows.map((row) => (
-                  <tr key={row.id} className="transition hover:bg-teal-50/40">
-                    <td className="px-3 py-2.5 font-medium tabular-nums text-slate-800">
-                      {row.statement}
-                    </td>
+                filteredRows.map((row) => {
+                  const status = displayStatus(row.status);
+                  return (
+                    <tr key={row.id} className="transition hover:bg-teal-50/40">
+                      <td className="px-3 py-2.5 font-medium tabular-nums text-slate-800">
+                        {row.statement}
+                      </td>
                     <td className="px-3 py-2.5">
                       <p className="font-medium text-slate-800">{row.payee}</p>
                       <p className="mt-0.5 text-xs text-slate-500">
@@ -342,10 +357,11 @@ export default function CommissionsPage() {
                     </td>
                     <td className="px-3 py-2.5 whitespace-nowrap text-slate-600">{row.period}</td>
                     <td className="px-3 py-2.5">
-                      <Badge variant={STATUS_TONES[row.status] ?? 'default'}>{row.status}</Badge>
+                      <Badge variant={STATUS_TONES[status] ?? 'default'}>{status}</Badge>
                     </td>
-                  </tr>
-                ))
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
