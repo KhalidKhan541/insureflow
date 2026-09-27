@@ -45,7 +45,19 @@ interface Agent {
   rating: number;
   territory: string;
   status: string;
+  performance: string;
 }
+
+/** 'at_risk' / 'on_track' → 'At Risk' / 'On Track' */
+const normalizeLabel = (value: string, fallback = ''): string => {
+  const trimmed = value.trim();
+  if (!trimmed) return fallback;
+  return trimmed
+    .replace(/_/g, ' ')
+    .split(/\s+/)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ');
+};
 
 const normalizeRetention = (value: number): number => {
   if (value <= 0) return 0;
@@ -59,9 +71,17 @@ const normalizeRating = (value: number): number => {
   return Math.min(value / 20, 5);
 };
 
+const PERFORMANCE_LABEL: Record<string, string> = {
+  top: 'Top performer',
+  above: 'Above target',
+  on_track: 'On track',
+  below: 'Below target',
+};
+
 const AGENTS: Agent[] = (MOCK_AGENTS as unknown[]).map((raw, index) => {
   const row = raw as Row;
   const name = readText(row, ['name', 'agentName', 'fullName'], `Agent ${index + 1}`);
+  const performance = readText(row, ['performance', 'performanceBand'], 'on_track');
 
   return {
     id: readText(row, ['id', 'agentId'], `AGT-${210 + index}`),
@@ -76,9 +96,10 @@ const AGENTS: Agent[] = (MOCK_AGENTS as unknown[]).map((raw, index) => {
       'commissionEarned',
       'commissionYTD',
     ]),
-    rating: normalizeRating(readNumber(row, ['rating', 'score', 'performance'], 0)),
+    rating: normalizeRating(readNumber(row, ['rating', 'score'], 0)),
     territory: readText(row, ['territory', 'region', 'area'], 'Unassigned'),
-    status: readText(row, ['status', 'state'], 'Active'),
+    status: normalizeLabel(readText(row, ['status', 'state'], 'Active'), 'Active'),
+    performance: PERFORMANCE_LABEL[performance.toLowerCase()] ?? normalizeLabel(performance, 'On track'),
   };
 });
 
@@ -88,11 +109,20 @@ const STATUS_VARIANT: Record<string, BadgeVariant> = {
   Probation: 'warning',
   'On Leave': 'secondary',
   Provisional: 'warning',
+  Pending: 'warning',
+  Suspended: 'destructive',
   Inactive: 'outline',
   Terminated: 'destructive',
 };
 
 const statusVariant = (status: string): BadgeVariant => STATUS_VARIANT[status] ?? 'secondary';
+
+const PERFORMANCE_VARIANT: Record<string, BadgeVariant> = {
+  'Top performer': 'success',
+  'Above target': 'default',
+  'On track': 'secondary',
+  'Below target': 'warning',
+};
 
 const TEAL = '#0d9488';
 const TEAL_SOFT = '#5eead4';
@@ -372,6 +402,9 @@ export default function AgentsPage() {
 
                   <div className="mt-3 flex flex-wrap items-center gap-2">
                     <Badge variant="outline">{agent.territory}</Badge>
+                    <Badge variant={PERFORMANCE_VARIANT[agent.performance] ?? 'secondary'}>
+                      {agent.performance}
+                    </Badge>
                     <span className="flex items-center gap-1.5">
                       <Stars rating={agent.rating} />
                       <span className="text-xs font-medium tabular-nums text-slate-600">
