@@ -19,7 +19,7 @@ import MetricCard from '@/components/ui/MetricCard';
 import { MOCK_RISK } from '@/lib/mock-data';
 import { cn, formatDate, formatNumber, formatPercent } from '@/lib/utils';
 
-const LEVEL_KEYS = ['low', 'moderate', 'high', 'critical'] as const;
+const LEVEL_KEYS = ['low', 'medium', 'high', 'critical'] as const;
 type LevelKey = (typeof LEVEL_KEYS)[number];
 
 const LEVEL_META: Record<
@@ -27,35 +27,39 @@ const LEVEL_META: Record<
   { label: string; bg: string; fg: string; border: string; heat: string; badge: BadgeVariant }
 > = {
   low: { label: 'Low', bg: '#ecfdf5', fg: '#047857', border: '#a7f3d0', heat: '#10b981', badge: 'success' },
-  moderate: { label: 'Moderate', bg: '#fffbeb', fg: '#b45309', border: '#fde68a', heat: '#f59e0b', badge: 'warning' },
-  high: { label: 'High', bg: '#ffedd5', fg: '#c2410c', border: '#fed7aa', heat: '#f97316', badge: 'warning' },
+  medium: { label: 'Medium', bg: '#fffbeb', fg: '#b45309', border: '#fde68a', heat: '#f59e0b', badge: 'warning' },
+  high: { label: 'High', bg: '#ffedd5', fg: '#c2410c', border: '#fed7aa', heat: '#f97316', badge: 'danger' },
   critical: { label: 'Critical', bg: '#ffe4e6', fg: '#be123c', border: '#fecdd3', heat: '#e11d48', badge: 'destructive' },
 };
 
+/** Assessment status → badge treatment (canonical vocabulary: current / stale / superseded). */
 const STATUS_VARIANT: Record<string, BadgeVariant> = {
-  open: 'warning',
-  'in review': 'warning',
-  reviewing: 'warning',
-  mitigating: 'default',
-  monitoring: 'default',
-  'action plan': 'default',
-  accepted: 'secondary',
-  'risk accepted': 'secondary',
-  closed: 'success',
-  resolved: 'success',
+  current: 'success',
+  stale: 'warning',
+  superseded: 'secondary',
 };
 
-const STATUS_ORDER = ['open', 'mitigating', 'monitoring', 'accepted', 'closed'];
+const STATUS_ORDER = ['current', 'stale', 'superseded'];
+
+const DUE_SOON_DAYS = 90;
 
 function normalizeLevel(value: string): LevelKey | null {
   const key = value.trim().toLowerCase();
-  if (key === 'medium') return 'moderate';
   if ((LEVEL_KEYS as readonly string[]).includes(key)) return key as LevelKey;
   return null;
 }
 
 function capitalize(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+/** Split "Risk Engineering — Tobias Lindgren" into team + person. */
+function splitAssessor(assessor: string): { person: string; team: string | null } {
+  const parts = assessor.split('—').map((p) => p.trim());
+  if (parts.length >= 2) {
+    return { team: parts[0], person: parts.slice(1).join('—').trim() };
+  }
+  return { person: assessor, team: null };
 }
 
 /** Whole days from today until the given date (negative = overdue). */
@@ -75,7 +79,7 @@ function Countdown({ value }: { value: string }) {
   }
 
   const overdue = days < 0;
-  const dueSoon = days >= 0 && days <= 30;
+  const dueSoon = days >= 0 && days <= DUE_SOON_DAYS;
   const tone = overdue
     ? 'bg-rose-50 text-rose-600'
     : dueSoon
@@ -100,20 +104,14 @@ function Countdown({ value }: { value: string }) {
   );
 }
 
-function ControlCell({ value }: { value: number | string }) {
-  if (typeof value !== 'number') {
-    return <span className="text-xs font-medium text-slate-600">{value}</span>;
-  }
-
+/** Control effectiveness from mitigationScore (0–100, higher = better). */
+function ControlCell({ value }: { value: number }) {
   const fraction = value > 1 ? value / 100 : value;
-  const color = fraction >= 0.75 ? '#0d9488' : fraction >= 0.5 ? '#f59e0b' : '#e11d48';
+  const color = fraction >= 0.6 ? '#0d9488' : fraction >= 0.4 ? '#f59e0b' : '#e11d48';
 
   return (
     <div className="w-24">
-      <span
-        className="text-[11px] font-semibold tabular-nums"
-        style={{ color }}
-      >
+      <span className="text-[11px] font-semibold tabular-nums" style={{ color }}>
         {formatPercent(fraction, { digits: 0 })}
       </span>
       <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
@@ -176,11 +174,12 @@ export default function RiskPage() {
       if (!matchesStatus) return false;
       if (!q) return true;
       return [
-        risk.entity,
-        risk.exposure,
+        risk.subjectName,
+        risk.subjectType,
         risk.assessor,
-        String(risk.inherentRisk),
-        String(risk.residualRisk),
+        risk.methodology,
+        String(risk.level),
+        String(risk.residualLevel),
         String(risk.status),
       ]
         .join(' ')
@@ -193,9 +192,8 @@ export default function RiskPage() {
     () =>
       LEVEL_KEYS.map((level) => ({
         level: LEVEL_META[level].label,
-        inherent: filtered.filter((risk) => normalizeLevel(String(risk.inherentRisk)) === level)
-          .length,
-        residual: filtered.filter((risk) => normalizeLevel(String(risk.residualRisk)) === level)
+        inherent: filtered.filter((risk) => normalizeLevel(String(risk.level)) === level).length,
+        residual: filtered.filter((risk) => normalizeLevel(String(risk.residualLevel)) === level)
           .length,
         heat: LEVEL_META[level].heat,
       })),
@@ -203,9 +201,9 @@ export default function RiskPage() {
   );
 
   const counts = useMemo(() => {
-    const acc: Record<LevelKey, number> = { low: 0, moderate: 0, high: 0, critical: 0 };
+    const acc: Record<LevelKey, number> = { low: 0, medium: 0, high: 0, critical: 0 };
     for (const risk of MOCK_RISK) {
-      const key = normalizeLevel(String(risk.residualRisk));
+      const key = normalizeLevel(String(risk.residualLevel));
       if (key) acc[key] += 1;
     }
     return acc;
@@ -216,26 +214,22 @@ export default function RiskPage() {
     let dueSoon = 0;
     const upcoming: { entity: string; nextReview: string; days: number }[] = [];
     for (const risk of MOCK_RISK) {
-      const days = daysUntil(risk.nextReview);
+      const days = daysUntil(risk.nextReviewAt);
       if (days === null) continue;
       if (days < 0) overdue += 1;
-      else if (days <= 30) dueSoon += 1;
-      if (days <= 60) upcoming.push({ entity: risk.entity, nextReview: risk.nextReview, days });
+      else if (days <= DUE_SOON_DAYS) dueSoon += 1;
+      upcoming.push({ entity: risk.subjectName, nextReview: risk.nextReviewAt, days });
     }
     upcoming.sort((a, b) => a.days - b.days);
     return { overdue, dueSoon, upcoming: upcoming.slice(0, 4) };
   }, []);
 
-  const controlScores = MOCK_RISK.filter((risk) => typeof risk.controlEffectiveness === 'number')
-    .map((risk) => risk.controlEffectiveness as number)
-    .map((value) => (value > 1 ? value / 100 : value));
   const avgControl =
-    controlScores.length > 0
-      ? controlScores.reduce((sum, value) => sum + value, 0) / controlScores.length
+    MOCK_RISK.length > 0
+      ? MOCK_RISK.reduce((sum, risk) => sum + risk.mitigationScore, 0) / MOCK_RISK.length / 100
       : 0;
 
-  const elevated =
-    counts.high + counts.critical;
+  const elevated = counts.high + counts.critical;
 
   const clearFilters = () => {
     setQuery('');
@@ -269,7 +263,7 @@ export default function RiskPage() {
         <MetricCard
           label="Overdue reviews"
           value={formatNumber(horizon.overdue)}
-          hint={`${horizon.dueSoon} due within 30 days`}
+          hint={`${horizon.dueSoon} due within ${DUE_SOON_DAYS} days`}
         />
         <MetricCard
           label="Avg control effectiveness"
@@ -413,7 +407,9 @@ export default function RiskPage() {
               <p className="text-lg font-semibold tabular-nums text-amber-600">
                 {formatNumber(horizon.dueSoon)}
               </p>
-              <p className="mt-0.5 text-xs font-medium text-slate-500">Due in 30 days</p>
+              <p className="mt-0.5 text-xs font-medium text-slate-500">
+                Due in {DUE_SOON_DAYS} days
+              </p>
             </div>
           </div>
 
@@ -433,7 +429,7 @@ export default function RiskPage() {
               ))
             ) : (
               <li className="rounded-lg border border-dashed border-slate-200 px-3 py-4 text-center text-xs text-slate-400">
-                No reviews scheduled in the next 60 days
+                No reviews scheduled
               </li>
             )}
           </ul>
@@ -465,9 +461,10 @@ export default function RiskPage() {
               </thead>
               <tbody>
                 {filtered.map((risk) => {
-                  const inherent = normalizeLevel(String(risk.inherentRisk));
+                  const inherent = normalizeLevel(String(risk.level));
                   const statusKey = String(risk.status).trim().toLowerCase();
                   const statusVariant = STATUS_VARIANT[statusKey] ?? 'outline';
+                  const { person, team } = splitAssessor(risk.assessor);
 
                   return (
                     <tr
@@ -475,38 +472,46 @@ export default function RiskPage() {
                       className="border-b border-slate-100 transition last:border-b-0 hover:bg-teal-50/40"
                     >
                       <td className="py-3 pr-4">
-                        <p className="text-sm font-semibold text-slate-800">{risk.entity}</p>
-                        <p className="mt-0.5 text-[11px] text-slate-400">ID {risk.id}</p>
+                        <p className="text-sm font-semibold text-slate-800">{risk.subjectName}</p>
+                        <p className="mt-0.5 text-[11px] text-slate-400">
+                          {risk.id} · grade {risk.grade}
+                        </p>
                       </td>
                       <td className="py-3 pr-4">
-                        <Badge variant="outline">{risk.exposure}</Badge>
+                        <Badge variant="outline">{capitalize(risk.subjectType)}</Badge>
                       </td>
                       <td className="py-3 pr-4">
                         {inherent ? (
-                          <Badge variant={LEVEL_META[inherent].badge}>
-                            {LEVEL_META[inherent].label}
-                          </Badge>
+                          <span className="flex items-center gap-1.5">
+                            <Badge variant={LEVEL_META[inherent].badge}>
+                              {LEVEL_META[inherent].label}
+                            </Badge>
+                            <span className="text-[11px] tabular-nums text-slate-400">
+                              {risk.score}
+                            </span>
+                          </span>
                         ) : (
-                          <span className="text-xs text-slate-500">{risk.inherentRisk}</span>
+                          <span className="text-xs text-slate-500">{risk.level}</span>
                         )}
                       </td>
                       <td className="py-3 pr-4">
-                        <ControlCell value={risk.controlEffectiveness} />
+                        <ControlCell value={risk.mitigationScore} />
                       </td>
                       <td className="py-3 pr-4">
-                        <HeatBadge value={String(risk.residualRisk)} />
+                        <HeatBadge value={String(risk.residualLevel)} />
                       </td>
                       <td className="py-3 pr-4 text-xs font-medium text-slate-600">
-                        {risk.assessor}
+                        {person}
+                        {team && <span className="block text-[11px] text-slate-400">{team}</span>}
                       </td>
                       <td className="py-3 pr-4 text-xs text-slate-500">
-                        {formatDate(risk.lastReview)}
+                        {formatDate(risk.assessedAt)}
                       </td>
                       <td className="py-3 pr-4">
                         <div className="flex flex-col gap-1">
-                          <Countdown value={risk.nextReview} />
+                          <Countdown value={risk.nextReviewAt} />
                           <span className="text-[11px] text-slate-400">
-                            {formatDate(risk.nextReview)}
+                            {formatDate(risk.nextReviewAt)}
                           </span>
                         </div>
                       </td>
