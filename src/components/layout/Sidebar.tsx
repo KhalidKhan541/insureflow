@@ -21,7 +21,7 @@ import {
   getIcon,
 } from '@/components/icons';
 import { SIDEBAR_NAV, type NavItem } from '@/lib/constants';
-import { MOCK_OPEN_CLAIMS } from '@/lib/mock-data';
+import { OPEN_CLAIMS } from '@/lib/mock-data';
 import { formatCurrency, cn } from '@/lib/utils';
 import { useIfSidebar } from '@/contexts/SidebarContext';
 
@@ -111,9 +111,9 @@ function NavLink({
 }
 
 function OpenClaimsWidget({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?: () => void }) {
-  const total = MOCK_OPEN_CLAIMS.length;
-  const critical = MOCK_OPEN_CLAIMS.filter((c) => c.severity === 'Critical').length;
-  const reserve = MOCK_OPEN_CLAIMS.reduce((sum, claim) => sum + claim.amount, 0);
+  const total = OPEN_CLAIMS.length;
+  const critical = OPEN_CLAIMS.filter((claim) => claim.severity === 'critical').length;
+  const reserve = OPEN_CLAIMS.reduce((sum, claim) => sum + claim.reserveAmount, 0);
 
   if (collapsed) {
     return (
