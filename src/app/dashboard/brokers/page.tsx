@@ -49,14 +49,125 @@ interface Broker {
   contact: Contact;
   carriers: Carriers;
   submissions: number;
+  bound: number;
   /** Normalized to a 0–1 fraction. */
   hitRatio: number;
   commission: string;
+  commissionPaid: number;
   status: string;
 }
 
+/** 'commercial_property' / 'active' → 'Commercial Property' / 'Active' */
+const formatLabel = (value: string): string =>
+  value
+    .replace(/_/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .map((word) => (word ? word.charAt(0).toUpperCase() + word.slice(1).toLowerCase() : word))
+    .join(' ');
+
 const rate = (value: number): string =>
   formatPercent(value > 1 ? value / 100 : value, { digits: 0 });
+
+/**
+ * The mock CRM tracks carrier appointments as lines of business, so fall back
+ * to `lines` when a dedicated carrier list is not present.
+ */
+const readCarriers = (row: Row): Carriers => {
+  const value = pick(row, [
+    'carriers',
+    'appointedCarriers',
+    'carrierCount',
+    'carriersAppointed',
+    'lines',
+  ]);
+
+  if (Array.isArray(value)) {
+    const names = value
+      .map((carrier) =>
+        typeof carrier === 'string'
+          ? formatLabel(carrier)
+          : readText(carrier as Row, ['name', 'carrier'], ''),
+      )
+      .filter(Boolean);
+    return { count: names.length, names };
+  }
+
+  if (typeof value === 'number') return { count: value, names: [] };
+
+  if (typeof value === 'string') {
+    if (value.includes(',')) {
+      const names = value
+        .split(',')
+        .map((part) => formatLabel(part))
+        .filter(Boolean);
+      return { count: names.length, names };
+    }
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) return { count: numeric, names: [] };
+    return { count: 1, names: [formatLabel(value)] };
+  }
+
+  return { count: readNumber(row, ['carrierCount']), names: [] };
+};
+
+const readCommission = (row: Row): string => {
+  const direct = pick(row, ['commissionSchedule', 'commissionScheduleLabel', 'commission']);
+
+  if (typeof direct === 'string') return direct;
+  if (typeof direct === 'number') {
+    return Number.isFinite(direct) ? `${rate(direct)} schedule` : '—';
+  }
+
+  const label = (value: unknown) => {
+    if (typeof value === 'number') return Number.isFinite(value) ? rate(value) : '—';
+    if (typeof value === 'string') return value;
+    return '—';
+  };
+
+  if (direct && typeof direct === 'object') {
+    const schedule = direct as Row;
+    const newRate = pick(schedule, ['new', 'newBusiness', 'newRate']);
+    const renewalRate = pick(schedule, ['renewal', 'renewalRate']);
+    if (newRate !== undefined || renewalRate !== undefined) {
+      return `${label(newRate)} new · ${label(renewalRate)} renewal`;
+    }
+  }
+
+  const newRate = pick(row, ['commissionNew', 'newBusinessCommission', 'newRate']);
+  const renewalRate = pick(row, ['commissionRenewal', 'renewalCommission', 'renewalRate']);
+  if (newRate !== undefined || renewalRate !== undefined) {
+    return `${label(newRate)} new · ${label(renewalRate)} renewal`;
+  }
+
+  const commissionRate = pick(row, ['commissionRate', 'rate']);
+  if (typeof commissionRate === 'number') {
+    return Number.isFinite(commissionRate) ? `${rate(commissionRate)} schedule` : '—';
+  }
+  if (typeof commissionRate === 'string') {
+    const numeric = Number(commissionRate);
+    return Number.isFinite(numeric) ? `${rate(numeric)} schedule` : commissionRate;
+  }
+
+  return '—';
+};
+
+/**
+ * Mock appointment states → directory vocabulary
+ * (appointed / prospect / terminated).
+ */
+const STATUS_LABEL: Record<string, string> = {
+  active: 'Appointed',
+  appointed: 'Appointed',
+  onboarding: 'Prospect',
+  prospect: 'Prospect',
+  probation: 'Probation',
+  inactive: 'Terminated',
+  terminated: 'Terminated',
+};
+
+/** Full appointment vocabulary the directory filters on. */
+const DIRECTORY_STATUSES: string[] = ['Appointed', 'Prospect', 'Probation', 'Terminated'];
 
 const readContact = (row: Row): Contact => {
   const value = pick(row, ['contact', 'contactName', 'primaryContact', 'rep', 'broker']);
@@ -75,62 +186,6 @@ const readContact = (row: Row): Contact => {
   };
 };
 
-const readCarriers = (row: Row): Carriers => {
-  const value = pick(row, ['carriers', 'appointedCarriers', 'carrierCount', 'carriersAppointed']);
-
-  if (Array.isArray(value)) {
-    const names = value.map((carrier) =>
-      typeof carrier === 'string' ? carrier : readText(carrier as Row, ['name', 'carrier'], ''),
-    );
-    return { count: names.length, names };
-  }
-
-  if (typeof value === 'number') return { count: value, names: [] };
-
-  if (typeof value === 'string') {
-    if (value.includes(',')) {
-      const names = value
-        .split(',')
-        .map((part) => part.trim())
-        .filter(Boolean);
-      return { count: names.length, names };
-    }
-    const numeric = Number(value);
-    if (Number.isFinite(numeric)) return { count: numeric, names: [] };
-    return { count: 1, names: [value] };
-  }
-
-  return { count: readNumber(row, ['carrierCount']), names: [] };
-};
-
-const readCommission = (row: Row): string => {
-  const direct = pick(row, ['commissionSchedule', 'commissionScheduleLabel', 'commission']);
-
-  if (typeof direct === 'string') return direct;
-  if (typeof direct === 'number') return `${rate(direct)} schedule`;
-
-  if (direct && typeof direct === 'object') {
-    const schedule = direct as Row;
-    const newRate = pick(schedule, ['new', 'newBusiness', 'newRate']);
-    const renewalRate = pick(schedule, ['renewal', 'renewalRate']);
-    if (newRate !== undefined || renewalRate !== undefined) {
-      const label = (value: unknown) =>
-        typeof value === 'number' ? rate(value) : typeof value === 'string' ? value : '—';
-      return `${label(newRate)} new · ${label(renewalRate)} renewal`;
-    }
-  }
-
-  const newRate = pick(row, ['commissionNew', 'newBusinessCommission', 'newRate']);
-  const renewalRate = pick(row, ['commissionRenewal', 'renewalCommission', 'renewalRate']);
-  if (newRate !== undefined || renewalRate !== undefined) {
-    const label = (value: unknown) =>
-      typeof value === 'number' ? rate(value) : typeof value === 'string' ? value : '—';
-    return `${label(newRate)} new · ${label(renewalRate)} renewal`;
-  }
-
-  return '—';
-};
-
 const normalizeHitRatio = (value: number): number => {
   if (value <= 0) return 0;
   return value > 1 ? Math.min(value / 100, 1) : value;
@@ -138,6 +193,7 @@ const normalizeHitRatio = (value: number): number => {
 
 const BROKERS: Broker[] = (MOCK_BROKERS as unknown[]).map((raw, index) => {
   const row = raw as Row;
+  const rawStatus = readText(row, ['status', 'state'], 'prospect').toLowerCase();
 
   return {
     id: readText(row, ['id', 'brokerId'], `BRK-${310 + index}`),
@@ -146,13 +202,18 @@ const BROKERS: Broker[] = (MOCK_BROKERS as unknown[]).map((raw, index) => {
     carriers: readCarriers(row),
     submissions: readNumber(row, [
       'submissions',
+      'submittedPolicies',
       'submissionVolume',
       'submissionsYtd',
       'submissionCount',
     ]),
-    hitRatio: normalizeHitRatio(readNumber(row, ['hitRatio', 'hitRate', 'conversion', 'wins'])),
+    bound: readNumber(row, ['bound', 'boundPolicies', 'policiesBound']),
+    hitRatio: normalizeHitRatio(
+      readNumber(row, ['hitRatio', 'hitRate', 'conversionRate', 'conversion', 'wins']),
+    ),
     commission: readCommission(row),
-    status: readText(row, ['status', 'state'], 'Prospect'),
+    commissionPaid: readNumber(row, ['commissionPaid', 'commissionEarned']),
+    status: STATUS_LABEL[rawStatus] ?? formatLabel(rawStatus),
   };
 });
 
@@ -160,6 +221,7 @@ const STATUS_VARIANT: Record<string, BadgeVariant> = {
   Appointed: 'success',
   'In Appointment': 'success',
   Prospect: 'warning',
+  Probation: 'warning',
   Pending: 'secondary',
   'Under Review': 'default',
   Terminated: 'destructive',
@@ -187,10 +249,11 @@ export default function BrokersPage() {
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState('All');
 
-  const statusOptions = useMemo(
-    () => ['All', ...Array.from(new Set(BROKERS.map((broker) => broker.status)))],
-    [],
-  );
+  const statusOptions = useMemo(() => {
+    const present = new Set(BROKERS.map((broker) => broker.status));
+    const extras = Array.from(present).filter((status) => !DIRECTORY_STATUSES.includes(status));
+    return ['All', ...DIRECTORY_STATUSES, ...extras];
+  }, []);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -242,9 +305,9 @@ export default function BrokersPage() {
           hint={`${formatNumber(appointed.length)} currently appointed`}
         />
         <StatTile
-          label="Appointed carriers"
+          label="Appointed lines"
           value={formatNumber(totalCarriers)}
-          hint="Across all broker relationships"
+          hint="Carrier appointments per firm"
         />
         <StatTile
           label="Submissions"
@@ -382,17 +445,23 @@ export default function BrokersPage() {
 
                   <td className="px-3 py-3.5">
                     {broker.carriers.names.length > 0 ? (
-                      <div className="flex flex-wrap gap-1">
-                        {broker.carriers.names.slice(0, 3).map((name) => (
-                          <Badge key={name} variant="outline">
-                            {name}
-                          </Badge>
-                        ))}
-                        {broker.carriers.names.length > 3 && (
-                          <Badge variant="secondary">
-                            +{broker.carriers.names.length - 3}
-                          </Badge>
-                        )}
+                      <div>
+                        <div className="flex flex-wrap gap-1">
+                          {broker.carriers.names.slice(0, 3).map((name) => (
+                            <Badge key={name} variant="outline">
+                              {name}
+                            </Badge>
+                          ))}
+                          {broker.carriers.names.length > 3 && (
+                            <Badge variant="secondary">
+                              +{broker.carriers.names.length - 3}
+                            </Badge>
+                          )}
+                        </div>
+                        <p className="mt-1 text-[11px] text-slate-400">
+                          {broker.carriers.count} appointed line
+                          {broker.carriers.count === 1 ? '' : 's'}
+                        </p>
                       </div>
                     ) : (
                       <span className="text-xs font-medium text-slate-600">
@@ -401,8 +470,13 @@ export default function BrokersPage() {
                     )}
                   </td>
 
-                  <td className="px-3 py-3.5 text-right font-medium tabular-nums text-slate-800">
-                    {formatNumber(broker.submissions)}
+                  <td className="px-3 py-3.5 text-right">
+                    <p className="font-medium tabular-nums text-slate-800">
+                      {formatNumber(broker.submissions)}
+                    </p>
+                    <p className="text-[11px] text-slate-400">
+                      {formatNumber(broker.bound)} bound
+                    </p>
                   </td>
 
                   <td className="px-3 py-3.5">
@@ -419,8 +493,12 @@ export default function BrokersPage() {
                     </div>
                   </td>
 
-                  <td className="whitespace-nowrap px-3 py-3.5 text-xs text-slate-600">
-                    {broker.commission}
+                  <td className="whitespace-nowrap px-3 py-3.5">
+                    <p className="text-xs font-medium text-slate-700">{broker.commission}</p>
+                    <p className="text-[11px] text-slate-400">
+                      {formatCurrency(broker.commissionPaid, 'USD', { maximumFractionDigits: 0 })}{' '}
+                      paid YTD
+                    </p>
                   </td>
 
                   <td className="px-3 py-3.5">
@@ -527,7 +605,7 @@ export default function BrokersPage() {
                     <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
                       <div
                         className="h-full rounded-full bg-teal-600"
-                        style={{ width: `${Math.max(share * 100, 2)}%` }}
+                        style={{ width: `${share > 0 ? Math.max(share * 100, 2) : 0}%` }}
                       />
                     </div>
                     <p className="mt-1.5 text-[11px] text-slate-500">
