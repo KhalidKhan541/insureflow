@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Card, CardTitle } from '@/components/ui/Card';
 import MetricCard from '@/components/ui/MetricCard';
 import { MOCK_PAYMENTS } from '@/lib/mock-data';
+import type { PaymentMethod, PaymentStatus } from '@/lib/mock-data';
 import { cn, formatCurrency, formatPercent } from '@/lib/utils';
 
 const TEAL = '#0d9488';
@@ -20,9 +21,45 @@ const DAY_MS = 86_400_000;
 
 const STATUS_FILTERS = ['All', 'Paid', 'Pending', 'Failed', 'Refunded'] as const;
 type StatusFilter = (typeof STATUS_FILTERS)[number];
+type DisplayStatus = Exclude<StatusFilter, 'All'>;
 
 const METHOD_FILTERS = ['All', 'Card', 'ACH', 'Check', 'Wire'] as const;
 type MethodFilter = (typeof METHOD_FILTERS)[number];
+
+/**
+ * Mock payment statuses are lowercase (`succeeded`, `processing`, …); this page
+ * works with display labels, so normalize before comparing or rendering.
+ */
+function displayStatus(status: PaymentStatus): DisplayStatus {
+  switch (status) {
+    case 'succeeded':
+      return 'Paid';
+    case 'refunded':
+      return 'Refunded';
+    case 'failed':
+    case 'canceled':
+      return 'Failed';
+    case 'processing':
+    case 'past_due':
+      return 'Pending';
+    default:
+      return 'Pending';
+  }
+}
+
+const METHOD_LABELS: Record<PaymentMethod, string> = {
+  card: 'Card',
+  ach: 'ACH',
+  wire: 'Wire',
+  check: 'Check',
+  direct_debit: 'Direct debit',
+  paypal: 'PayPal',
+};
+
+/** Title-cases the mock payment method for labels and filter matching. */
+function displayMethod(method: PaymentMethod): string {
+  return METHOD_LABELS[method] ?? method;
+}
 
 const AGING_BUCKETS = ['Not yet due', '1–30 days', '31–60 days', '60+ days'] as const;
 
@@ -94,12 +131,13 @@ export default function PaymentsPage() {
     const acc = { paid: 0, pending: 0, failed: 0, refunded: 0, collected: 0, billed: 0 };
     for (const row of MOCK_PAYMENTS) {
       acc.billed += row.amount;
-      if (row.status === 'Paid') {
+      const status = displayStatus(row.status);
+      if (status === 'Paid') {
         acc.paid += row.amount;
         acc.collected += row.amount;
-      } else if (row.status === 'Pending') {
+      } else if (status === 'Pending') {
         acc.pending += row.amount;
-      } else if (row.status === 'Failed') {
+      } else if (status === 'Failed') {
         acc.failed += row.amount;
       } else {
         acc.refunded += row.amount;
@@ -113,7 +151,7 @@ export default function PaymentsPage() {
     () =>
       STATUS_MIX.map((status) => ({
         name: status,
-        value: MOCK_PAYMENTS.filter((row) => row.status === status).reduce(
+        value: MOCK_PAYMENTS.filter((row) => displayStatus(row.status) === status).reduce(
           (sum, row) => sum + row.amount,
           0,
       ),
@@ -126,7 +164,8 @@ export default function PaymentsPage() {
       AGING_BUCKETS.map((bucket) => [bucket, { bucket, count: 0, amount: 0 }]),
     );
     for (const row of MOCK_PAYMENTS) {
-      if (row.status === 'Paid' || row.status === 'Refunded') continue;
+      const status = displayStatus(row.status);
+      if (status === 'Paid' || status === 'Refunded') continue;
       const entry = buckets.get(bucketFor(daysPastDue(row.dueDate)))!;
       entry.count += 1;
       entry.amount += row.amount;
@@ -141,15 +180,15 @@ export default function PaymentsPage() {
   const filteredRows = useMemo(() => {
     const q = query.trim().toLowerCase();
     return MOCK_PAYMENTS.filter((row) => {
-      if (statusFilter !== 'All' && row.status !== statusFilter) return false;
-      if (methodFilter !== 'All' && row.method !== methodFilter) return false;
+      if (statusFilter !== 'All' && displayStatus(row.status) !== statusFilter) return false;
+      if (methodFilter !== 'All' && displayMethod(row.method) !== methodFilter) return false;
       if (!q) return true;
       return [
         row.reference,
         row.policyNumber,
         row.customer,
-        row.method,
-        row.status,
+        displayMethod(row.method),
+        displayStatus(row.status),
         String(row.installment),
       ]
         .join(' ')
@@ -377,8 +416,10 @@ export default function PaymentsPage() {
                 </tr>
               ) : (
                 filteredRows.map((row) => {
+                  const status = displayStatus(row.status);
+                  const method = displayMethod(row.method);
                   const late =
-                    row.status === 'Paid' &&
+                    status === 'Paid' &&
                     row.paidDate !== null &&
                     new Date(row.paidDate).getTime() > new Date(row.dueDate).getTime();
                   return (
@@ -399,7 +440,7 @@ export default function PaymentsPage() {
                         {formatCurrency(row.amount)}
                       </td>
                       <td className="px-3 py-2.5">
-                        <Badge variant={methodBadge[row.method] ?? 'outline'}>{row.method}</Badge>
+                        <Badge variant={methodBadge[method] ?? 'outline'}>{method}</Badge>
                       </td>
                       <td className="px-3 py-2.5 tabular-nums text-slate-600">
                         {row.installment} of {row.installments}
@@ -417,7 +458,7 @@ export default function PaymentsPage() {
                         {late ? <span className="ml-1 text-[11px]">late</span> : null}
                       </td>
                       <td className="px-3 py-2.5">
-                        <Badge variant={statusVariant[row.status] ?? 'default'}>{row.status}</Badge>
+                        <Badge variant={statusVariant[status] ?? 'default'}>{status}</Badge>
                       </td>
                     </tr>
                   );
