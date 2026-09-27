@@ -5,7 +5,7 @@ import { useMemo, useState } from 'react';
 import { Badge, type BadgeVariant } from '@/components/ui/Badge';
 import { Card, CardTitle } from '@/components/ui/Card';
 import MetricCard from '@/components/ui/MetricCard';
-import { MOCK_RETENTION_TREND, MOCK_RENEWALS } from '@/lib/mock-data';
+import { MOCK_AGENTS, MOCK_RENEWALS } from '@/lib/mock-data';
 import { cn, formatCurrency, formatDate, formatNumber, formatPercent } from '@/lib/utils';
 
 /** Fixed reference date keeps the renewal countdowns deterministic in this demo. */
@@ -117,8 +117,9 @@ export default function RenewalsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [overrides]);
 
-  const rollingRetention =
-    MOCK_RETENTION_TREND[MOCK_RETENTION_TREND.length - 1].retention / 100;
+  /** Book-wide retention, averaged across the agent roster. */
+  const agentRetention =
+    MOCK_AGENTS.reduce((sum, agent) => sum + agent.retentionRate, 0) / (MOCK_AGENTS.length || 1);
 
   const filtered = useMemo(() => {
     const term = query.trim().toLowerCase();
@@ -163,9 +164,9 @@ export default function RenewalsPage() {
       hint: `${stats.retained} retained · ${stats.lapsed} lost · ${stats.open} in flight`,
     },
     {
-      label: 'Rolling 12-mo retention',
-      value: formatPercent(rollingRetention, { digits: 1 }),
-      hint: `${MOCK_RETENTION_TREND.length}-month trend · target 93.0%`,
+      label: 'Book-wide retention',
+      value: formatPercent(agentRetention, { digits: 1 }),
+      hint: `Average across ${MOCK_AGENTS.length} agents · target 93.0%`,
     },
     {
       label: 'Due within 30 days',
