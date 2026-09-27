@@ -18,42 +18,42 @@ import { Badge } from '@/components/ui/Badge';
 import { Card, CardTitle } from '@/components/ui/Card';
 import MetricCard from '@/components/ui/MetricCard';
 import { MOCK_PREMIUMS } from '@/lib/mock-data';
-import { cn, formatCurrency, formatPercent } from '@/lib/utils';
+import type { PremiumMonth } from '@/lib/mock-data';
+import { cn, formatCurrency, formatNumber, formatPercent } from '@/lib/utils';
 
 const TEAL = '#0d9488';
 const TEAL_SOFT = '#5eead4';
 
-/** Fixed reference date keeps the aging buckets deterministic in this demo. */
-const TODAY = new Date('2026-09-26T00:00:00');
-const DAY_MS = 86_400_000;
+/** Collection rate a closed month is expected to reach before it counts as collected. */
+const COLLECTION_TARGET = 0.925;
+/** Anything below this is treated as still outstanding rather than merely partial. */
+const OUTSTANDING_FLOOR = 0.8;
 
-const STATUS_FILTERS = ['All', 'Collected', 'Partial', 'Outstanding', 'Overdue'] as const;
+const STATUS_FILTERS = ['All', 'Collected', 'Partial', 'Outstanding'] as const;
 type StatusFilter = (typeof STATUS_FILTERS)[number];
+type MonthStatus = Exclude<StatusFilter, 'All'>;
 
-const AGING_BUCKETS = ['Current', '1–30 days', '31–60 days', '61–90 days', '90+ days'] as const;
-type AgingBucket = (typeof AGING_BUCKETS)[number];
-
-const statusVariant: Record<string, 'success' | 'default' | 'warning' | 'destructive'> = {
+const statusVariant: Record<MonthStatus, 'success' | 'warning' | 'destructive'> = {
   Collected: 'success',
-  Partial: 'default',
-  Outstanding: 'warning',
-  Overdue: 'destructive',
+  Partial: 'warning',
+  Outstanding: 'destructive',
 };
 
-function daysPastDue(dueDate: string): number {
-  return Math.floor((TODAY.getTime() - new Date(dueDate).getTime()) / DAY_MS);
+/** The ledger has no per-invoice due dates — derive a month status from collection rate. */
+function statusFor(row: PremiumMonth): MonthStatus {
+  const rate = row.writtenPremium > 0 ? row.premiumCollected / row.writtenPremium : 0;
+  if (rate >= COLLECTION_TARGET) return 'Collected';
+  if (rate >= OUTSTANDING_FLOOR) return 'Partial';
+  return 'Outstanding';
 }
 
-function bucketFor(days: number): AgingBucket {
-  if (days <= 0) return 'Current';
-  if (days <= 30) return '1–30 days';
-  if (days <= 60) return '31–60 days';
-  if (days <= 90) return '61–90 days';
-  return '90+ days';
+function monthLabel(label: string): string {
+  return label.slice(0, 3);
 }
 
-function monthLabel(period: string): string {
-  return period.slice(0, 3);
+function average(rows: PremiumMonth[], pick: (row: PremiumMonth) => number): number {
+  if (rows.length === 0) return 0;
+  return rows.reduce((sum, row) => sum + pick(row), 0) / rows.length;
 }
 
 function ChartTooltip({ active, payload, label, formatter }: any) {
@@ -79,81 +79,70 @@ export default function PremiumsPage() {
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('All');
 
+  /** One row per month, sorted chronologically (YYYY-MM sorts naturally). */
+  const months = useMemo(() => [...MOCK_PREMIUMS].sort((a, b) => a.month.localeCompare(b.month)), []);
+
   const totals = useMemo(
     () =>
-      MOCK_PREMIUMS.reduce(
+      months.reduce(
         (acc, row) => ({
-          written: acc.written + row.written,
-          earned: acc.earned + row.earned,
-          collected: acc.collected + row.collected,
-          outstanding: acc.outstanding + row.outstanding,
+          written: acc.written + row.writtenPremium,
+          earned: acc.earned + row.earnedPremium,
+          collected: acc.collected + row.premiumCollected,
+          outstanding: acc.outstanding + row.premiumOutstanding,
         }),
         { written: 0, earned: 0, collected: 0, outstanding: 0 },
       ),
-    [],
+    [months],
   );
 
   const collectionRate = totals.written > 0 ? totals.collected / totals.written : 0;
 
-  const trend = useMemo(() => {
-    const byPeriod = new Map<
-      string,
-      { period: string; written: number; earned: number; collected: number }
-    >();
-    for (const row of MOCK_PREMIUMS) {
-      const entry = byPeriod.get(row.period) ?? {
-        period: row.period,
-        written: 0,
-        earned: 0,
-        collected: 0,
-      };
-      entry.written += row.written;
-      entry.earned += row.earned;
-      entry.collected += row.collected;
-      byPeriod.set(row.period, entry);
-    }
-    return [...byPeriod.values()];
-  }, []);
+  const trend = useMemo(
+    () =>
+      months.map((row) => ({
+        period: row.label,
+        written: row.writtenPremium,
+        earned: row.earnedPremium,
+        collected: row.premiumCollected,
+      })),
+    [months],
+  );
 
-  const byProduct = useMemo(() => {
-    const map = new Map<string, { product: string; written: number; collected: number }>();
-    for (const row of MOCK_PREMIUMS) {
-      const entry = map.get(row.product) ?? { product: row.product, written: 0, collected: 0 };
-      entry.written += row.written;
-      entry.collected += row.collected;
-      map.set(row.product, entry);
-    }
-    return [...map.values()].sort((a, b) => b.written - a.written);
-  }, []);
+  /** The ledger has no product dimension — split written premium by business type instead. */
+  const byMonth = useMemo(
+    () =>
+      months.map((row) => ({
+        period: row.label,
+        newBusiness: row.newBusinessPremium,
+        renewal: row.renewalPremium,
+      })),
+    [months],
+  );
 
-  const aging = useMemo(() => {
-    const buckets = new Map<AgingBucket, { bucket: AgingBucket; invoices: number; amount: number }>(
-      AGING_BUCKETS.map((bucket) => [bucket, { bucket, invoices: 0, amount: 0 }]),
-    );
-    for (const row of MOCK_PREMIUMS) {
-      if (row.outstanding <= 0) continue;
-      const entry = buckets.get(bucketFor(daysPastDue(row.dueDate)))!;
-      entry.invoices += 1;
-      entry.amount += row.outstanding;
-    }
-    return AGING_BUCKETS.map((bucket) => buckets.get(bucket)!);
-  }, []);
+  const ratios = useMemo(
+    () => ({
+      loss: average(months, (row) => row.lossRatio),
+      expense: average(months, (row) => row.expenseRatio),
+      combined: average(months, (row) => row.combinedRatio),
+    }),
+    [months],
+  );
 
-  const overdueCount = MOCK_PREMIUMS.filter(
-    (row) => row.outstanding > 0 && daysPastDue(row.dueDate) > 0,
-  ).length;
+  const laggingCount = months.filter((row) => statusFor(row) !== 'Collected').length;
 
   const filteredRows = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return MOCK_PREMIUMS.filter((row) => {
-      if (statusFilter !== 'All' && row.status !== statusFilter) return false;
+    return months.filter((row) => {
+      const status = statusFor(row);
+      if (statusFilter !== 'All' && status !== statusFilter) return false;
       if (!q) return true;
-      return [row.policyNumber, row.customer, row.product, row.period, row.status]
-        .join(' ')
-        .toLowerCase()
-        .includes(q);
+      return [row.label, row.month, status].join(' ').toLowerCase().includes(q);
     });
-  }, [query, statusFilter]);
+  }, [months, query, statusFilter]);
+
+  const periodRange =
+    months.length > 0 ? `${months[0].label} – ${months[months.length - 1].label}` : '';
 
   const selectClass =
     'rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20';
@@ -166,10 +155,10 @@ export default function PremiumsPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Premium ledger</h1>
           <p className="mt-1 text-sm text-slate-500">
-            Written vs earned premium, product mix, collection rate and outstanding aging.
+            Written vs earned premium, collection rate, business mix and monthly close status.
           </p>
         </div>
-        <Badge variant="outline">Jan–Sep 2026 · Accrual basis</Badge>
+        <Badge variant="outline">{periodRange} · Accrual basis</Badge>
       </header>
 
       {/* ---------- KPI row ---------- */}
@@ -179,7 +168,7 @@ export default function PremiumsPage() {
           value={formatCurrency(totals.written)}
           delta={8.6}
           deltaLabel="vs prior period"
-          hint={`${trend.length} billing periods`}
+          hint={`${trend.length} billing months`}
           trend="up"
         />
         <MetricCard
@@ -203,7 +192,7 @@ export default function PremiumsPage() {
           value={formatCurrency(totals.outstanding)}
           delta={-3.2}
           deltaLabel="vs last month"
-          hint={`${overdueCount} invoices past due`}
+          hint={`${laggingCount} month${laggingCount === 1 ? '' : 's'} below collection target`}
           trend="down"
         />
       </div>
@@ -316,41 +305,44 @@ export default function PremiumsPage() {
               </dd>
             </div>
             <div className="flex items-center justify-between">
-              <dt className="text-slate-500">Past due invoices</dt>
-              <dd className="font-semibold tabular-nums text-rose-600">{overdueCount}</dd>
+              <dt className="text-slate-500">Months below target</dt>
+              <dd className="font-semibold tabular-nums text-rose-600">{laggingCount}</dd>
             </div>
           </dl>
         </Card>
       </div>
 
-      {/* ---------- By-product bars + aging ---------- */}
+      {/* ---------- Business mix + ratios ---------- */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <Card className="lg:col-span-2">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <div>
-              <CardTitle>Premium by product</CardTitle>
-              <p className="mt-1 text-xs text-slate-500">Written vs collected, all periods</p>
+              <CardTitle>New business vs renewal</CardTitle>
+              <p className="mt-1 text-xs text-slate-500">
+                Written premium split by month, all billing periods
+              </p>
             </div>
             <div className="flex items-center gap-4 text-xs font-medium text-slate-600">
               <span className="flex items-center gap-1.5">
                 <span className="h-2.5 w-2.5 rounded-full" style={{ background: TEAL }} />
-                Written
+                New business
               </span>
               <span className="flex items-center gap-1.5">
                 <span className="h-2.5 w-2.5 rounded-full" style={{ background: TEAL_SOFT }} />
-                Collected
+                Renewal
               </span>
             </div>
           </div>
           <div className="h-64 w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={byProduct} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+              <BarChart data={byMonth} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
                 <XAxis
-                  dataKey="product"
+                  dataKey="period"
                   tickLine={false}
                   axisLine={false}
                   tick={{ fontSize: 11, fill: '#64748b' }}
+                  tickFormatter={monthLabel}
                 />
                 <YAxis
                   tickLine={false}
@@ -360,10 +352,16 @@ export default function PremiumsPage() {
                   width={44}
                 />
                 <Tooltip content={<ChartTooltip />} cursor={{ fill: '#f1f5f9' }} />
-                <Bar dataKey="written" name="Written" fill={TEAL} radius={[4, 4, 0, 0]} maxBarSize={26} />
                 <Bar
-                  dataKey="collected"
-                  name="Collected"
+                  dataKey="newBusiness"
+                  name="New business"
+                  fill={TEAL}
+                  radius={[4, 4, 0, 0]}
+                  maxBarSize={26}
+                />
+                <Bar
+                  dataKey="renewal"
+                  name="Renewal"
                   fill={TEAL_SOFT}
                   radius={[4, 4, 0, 0]}
                   maxBarSize={26}
@@ -375,50 +373,50 @@ export default function PremiumsPage() {
 
         <Card>
           <div className="mb-4 flex items-center justify-between">
-            <CardTitle>Outstanding aging</CardTitle>
-            <span className="text-xs text-slate-500">
-              {formatCurrency(totals.outstanding)} open
-            </span>
+            <CardTitle>Underwriting ratios</CardTitle>
+            <Badge variant={ratios.combined < 1 ? 'success' : 'danger'}>
+              {formatPercent(ratios.combined, { digits: 1 })} combined
+            </Badge>
           </div>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-slate-200 text-left text-[11px] uppercase tracking-wide text-slate-500">
-                <th className="pb-2 font-medium">Bucket</th>
-                <th className="pb-2 text-right font-medium">Inv.</th>
-                <th className="pb-2 text-right font-medium">Outstanding</th>
-                <th className="pb-2 text-right font-medium">Share</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {aging.map((row) => {
-                const share = totals.outstanding > 0 ? row.amount / totals.outstanding : 0;
-                const stale = row.bucket !== 'Current' && row.amount > 0;
-                return (
-                  <tr key={row.bucket} className="hover:bg-teal-50/40">
-                    <td className="py-2.5">
-                      <span
-                        className={cn(
-                          'text-xs font-medium',
-                          stale ? 'text-rose-600' : 'text-slate-600',
-                        )}
-                      >
-                        {row.bucket}
-                      </span>
-                    </td>
-                    <td className="py-2.5 text-right tabular-nums text-slate-500">
-                      {row.invoices}
-                    </td>
-                    <td className="py-2.5 text-right font-semibold tabular-nums text-slate-800">
-                      {formatCurrency(row.amount)}
-                    </td>
-                    <td className="py-2.5 text-right tabular-nums text-slate-500">
-                      {formatPercent(share, { digits: 0 })}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          <p className="text-xs text-slate-500">
+            Period-to-date averages across {months.length} closed months
+          </p>
+          <dl className="mt-5 space-y-4 text-sm">
+            <div className="flex items-center justify-between">
+              <dt className="text-slate-500">Loss ratio</dt>
+              <dd className="flex items-center gap-2">
+                <span className="font-semibold tabular-nums text-slate-800">
+                  {formatPercent(ratios.loss, { digits: 1 })}
+                </span>
+                <Badge variant={ratios.loss <= 0.65 ? 'success' : 'warning'}>
+                  {ratios.loss <= 0.65 ? 'Healthy' : 'Watch'}
+                </Badge>
+              </dd>
+            </div>
+            <div className="flex items-center justify-between">
+              <dt className="text-slate-500">Expense ratio</dt>
+              <dd className="font-semibold tabular-nums text-slate-800">
+                {formatPercent(ratios.expense, { digits: 1 })}
+              </dd>
+            </div>
+            <div className="flex items-center justify-between">
+              <dt className="text-slate-500">Combined ratio</dt>
+              <dd className="flex items-center gap-2">
+                <span className="font-semibold tabular-nums text-slate-800">
+                  {formatPercent(ratios.combined, { digits: 1 })}
+                </span>
+                <Badge variant={ratios.combined < 1 ? 'success' : 'danger'}>
+                  {ratios.combined < 1 ? 'Profitable' : 'Loss-making'}
+                </Badge>
+              </dd>
+            </div>
+            <div className="flex items-center justify-between">
+              <dt className="text-slate-500">Policies issued</dt>
+              <dd className="font-semibold tabular-nums text-slate-800">
+                {formatNumber(months.reduce((sum, row) => sum + row.policiesIssued, 0))}
+              </dd>
+            </div>
+          </dl>
         </Card>
       </div>
 
@@ -428,14 +426,14 @@ export default function PremiumsPage() {
           <div>
             <CardTitle>Monthly premium detail</CardTitle>
             <p className="mt-1 text-xs text-slate-500">
-              {filteredRows.length} of {MOCK_PREMIUMS.length} ledger entries
+              {filteredRows.length} of {months.length} ledger entries
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search policy, customer, product…"
+              placeholder="Search month or status…"
               className={cn(inputClass, 'w-64')}
             />
             <select
@@ -457,58 +455,61 @@ export default function PremiumsPage() {
           <table className="w-full min-w-[940px] text-sm">
             <thead>
               <tr className="border-b border-slate-200 text-left text-[11px] uppercase tracking-wide text-slate-500">
-                <th className="px-3 py-2 font-medium">Period</th>
-                <th className="px-3 py-2 font-medium">Policy</th>
-                <th className="px-3 py-2 font-medium">Customer</th>
-                <th className="px-3 py-2 font-medium">Product</th>
+                <th className="px-3 py-2 font-medium">Month</th>
                 <th className="px-3 py-2 text-right font-medium">Written</th>
                 <th className="px-3 py-2 text-right font-medium">Earned</th>
                 <th className="px-3 py-2 text-right font-medium">Collected</th>
                 <th className="px-3 py-2 text-right font-medium">Outstanding</th>
+                <th className="px-3 py-2 text-right font-medium">Loss ratio</th>
                 <th className="px-3 py-2 font-medium">Status</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filteredRows.length === 0 ? (
                 <tr>
-                  <td
-                    colSpan={9}
-                    className="px-3 py-10 text-center text-sm text-slate-400"
-                  >
+                  <td colSpan={7} className="px-3 py-10 text-center text-sm text-slate-400">
                     No premium entries match your search.
                   </td>
                 </tr>
               ) : (
-                filteredRows.map((row) => (
-                  <tr key={row.id} className="transition hover:bg-teal-50/40">
-                    <td className="px-3 py-2.5 whitespace-nowrap text-slate-600">{row.period}</td>
-                    <td className="px-3 py-2.5 font-medium tabular-nums text-slate-800">
-                      {row.policyNumber}
-                    </td>
-                    <td className="px-3 py-2.5 text-slate-600">{row.customer}</td>
-                    <td className="px-3 py-2.5 text-slate-600">{row.product}</td>
-                    <td className="px-3 py-2.5 text-right tabular-nums text-slate-700">
-                      {formatCurrency(row.written)}
-                    </td>
-                    <td className="px-3 py-2.5 text-right tabular-nums text-slate-700">
-                      {formatCurrency(row.earned)}
-                    </td>
-                    <td className="px-3 py-2.5 text-right font-medium tabular-nums text-slate-800">
-                      {formatCurrency(row.collected)}
-                    </td>
-                    <td
-                      className={cn(
-                        'px-3 py-2.5 text-right tabular-nums',
-                        row.outstanding > 0 ? 'font-medium text-amber-600' : 'text-slate-400',
-                      )}
-                    >
-                      {formatCurrency(row.outstanding)}
-                    </td>
-                    <td className="px-3 py-2.5">
-                      <Badge variant={statusVariant[row.status] ?? 'default'}>{row.status}</Badge>
-                    </td>
-                  </tr>
-                ))
+                filteredRows.map((row) => {
+                  const status = statusFor(row);
+                  return (
+                    <tr key={row.id} className="transition hover:bg-teal-50/40">
+                      <td className="px-3 py-2.5 whitespace-nowrap">
+                        <span className="font-medium text-slate-800">{row.label}</span>
+                        <span className="ml-2 text-xs text-slate-400">
+                          {formatNumber(row.policiesIssued)} policies
+                        </span>
+                      </td>
+                      <td className="px-3 py-2.5 text-right tabular-nums text-slate-700">
+                        {formatCurrency(row.writtenPremium)}
+                      </td>
+                      <td className="px-3 py-2.5 text-right tabular-nums text-slate-700">
+                        {formatCurrency(row.earnedPremium)}
+                      </td>
+                      <td className="px-3 py-2.5 text-right font-medium tabular-nums text-slate-800">
+                        {formatCurrency(row.premiumCollected)}
+                      </td>
+                      <td
+                        className={cn(
+                          'px-3 py-2.5 text-right tabular-nums',
+                          row.premiumOutstanding > 0
+                            ? 'font-medium text-amber-600'
+                            : 'text-slate-400',
+                        )}
+                      >
+                        {formatCurrency(row.premiumOutstanding)}
+                      </td>
+                      <td className="px-3 py-2.5 text-right tabular-nums text-slate-600">
+                        {formatPercent(row.lossRatio, { digits: 1 })}
+                      </td>
+                      <td className="px-3 py-2.5">
+                        <Badge variant={statusVariant[status]}>{status}</Badge>
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
